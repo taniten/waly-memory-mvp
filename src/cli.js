@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("path");
+const { initData } = require("./initData");
 const { generateReport } = require("./reporter");
 const { syncUniverse } = require("./universeEngine");
 const {
@@ -14,6 +15,7 @@ const {
 
 function printUsage() {
   console.log(`Uso:
+  node src/cli.js init-data
   node src/cli.js state
   node src/cli.js report
   node src/cli.js sync-universe
@@ -176,6 +178,9 @@ async function main() {
 
   try {
     switch (command) {
+      case "init-data":
+        initData();
+        break;
       case "state":
         renderState();
         break;

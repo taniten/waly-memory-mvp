@@ -5,9 +5,11 @@ node_modules/
 !.env.example
 
 data/*.json
+data/*.json.bak
 !data/.gitkeep
 
 reports/*.md
+reports/*.md.bak
 !reports/.gitkeep
 waly-daily-report*.md
 waly-outlier-hunt-report*.md

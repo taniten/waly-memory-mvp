@@ -4,6 +4,15 @@ const http = require("http");
 const https = require("https");
 const { URL } = require("url");
 
+const SENSITIVE_QUERY_KEYS = new Set([
+  "access_token",
+  "api_key",
+  "apikey",
+  "key",
+  "secret",
+  "token"
+]);
+
 function buildUrl(rawUrl, query = {}) {
   const url = new URL(rawUrl);
 
@@ -18,6 +27,18 @@ function buildUrl(rawUrl, query = {}) {
   return url;
 }
 
+function redactUrl(rawUrl) {
+  const target = rawUrl instanceof URL ? new URL(rawUrl.toString()) : new URL(rawUrl);
+
+  Array.from(target.searchParams.keys()).forEach((key) => {
+    if (SENSITIVE_QUERY_KEYS.has(key.toLowerCase())) {
+      target.searchParams.set(key, "[REDACTED]");
+    }
+  });
+
+  return target.toString();
+}
+
 function request(url, options = {}) {
   const {
     headers = {},
@@ -26,6 +47,7 @@ function request(url, options = {}) {
     timeoutMs = 15000
   } = options;
   const target = buildUrl(url, query);
+  const redactedTarget = redactUrl(target);
   const transport = target.protocol === "https:" ? https : http;
 
   return new Promise((resolve, reject) => {
@@ -43,7 +65,7 @@ function request(url, options = {}) {
           const body = Buffer.concat(chunks).toString("utf8");
 
           if (response.statusCode >= 400) {
-            const error = new Error(`HTTP ${response.statusCode} for ${target.toString()}`);
+            const error = new Error(`HTTP ${response.statusCode} for ${redactedTarget}`);
             error.body = body;
             error.statusCode = response.statusCode;
             reject(error);
@@ -54,14 +76,14 @@ function request(url, options = {}) {
             body,
             headers: response.headers,
             statusCode: response.statusCode,
-            url: target.toString()
+            url: redactedTarget
           });
         });
       }
     );
 
     req.setTimeout(timeoutMs, () => {
-      req.destroy(new Error(`Timeout after ${timeoutMs}ms for ${target.toString()}`));
+      req.destroy(new Error(`Timeout after ${timeoutMs}ms for ${redactedTarget}`));
     });
 
     req.on("error", reject);
@@ -89,6 +111,7 @@ async function requestText(url, options = {}) {
 }
 
 module.exports = {
+  redactUrl,
   requestJson,
   requestText
 };

@@ -87,9 +87,22 @@ waly-memory-mvp/
 
 ## Datos locales y privacidad
 
-`data/` y `reports/` quedan fuera del versionado publico porque pueden contener posiciones reales, watchlists, configuraciones, catalysts y reportes operativos. Los archivos de `examples/` son plantillas sanitizadas con tickers ficticios (`DEMO`, `TEST`, `FAKE`) para explicar la estructura sin exponer informacion sensible.
+`data/` y `reports/` quedan fuera del versionado publico porque pueden contener posiciones reales, watchlists, configuraciones, catalysts y reportes operativos. `data/` es local, no se versiona y cada operador lo mantiene en su propia maquina. Los archivos de `examples/` son plantillas sanitizadas con tickers ficticios (`DEMO`, `TEST`, `FAKE`) para explicar la estructura sin exponer informacion sensible.
 
-Si clonas el repo o queres arrancar desde cero, copia las plantillas seguras hacia `data/` antes de correr WALY:
+Si clonas el repo o queres arrancar desde cero, inicializa `data/` antes de correr WALY:
+
+```bash
+npm run init-data
+```
+
+Ese comando:
+
+- crea `data/` si no existe
+- copia `examples/*.example.json` hacia `data/*.json` solo cuando falta el archivo destino
+- nunca sobrescribe archivos reales existentes
+- muestra que archivos creo y cuales dejo intactos
+
+Si preferis hacerlo a mano, tambien podes copiar las plantillas seguras hacia `data/`:
 
 ```bash
 cp examples/positions.example.json data/positions.json
@@ -108,6 +121,7 @@ cp examples/fda.example.json data/fda.json
 ## Uso rapido
 
 ```bash
+node src/cli.js init-data
 node src/cli.js state
 node src/cli.js report
 node src/cli.js sync-universe
@@ -120,6 +134,7 @@ node src/cli.js set-watchlist ./mi-watchlist.json
 Atajos disponibles via `npm run`:
 
 ```bash
+npm run init-data
 npm run state
 npm run report
 npm run sync-universe
@@ -379,6 +394,7 @@ Para correr conectores reales:
 
 Notas:
 
+- Las API keys y tokens deben vivir en variables de entorno. No los guardes dentro de `data/*.json`, `examples/*.json` ni commits locales.
 - SEC y openFDA pueden funcionar sin key, pero SEC requiere un `User-Agent` identificable.
 - Finviz queda como conector configurable porque la URL exacta depende de tu acceso/export oficial.
 - Si faltan credenciales, WALY no rompe: marca el provider como no disponible y sigue local.

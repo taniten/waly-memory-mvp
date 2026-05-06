@@ -5,12 +5,15 @@
   "description": "Sistema local stateful para cazar pocas apuestas de alta asimetria en WALY.",
   "type": "commonjs",
   "scripts": {
+    "init-data": "node src/cli.js init-data",
     "state": "node src/cli.js state",
     "report": "node src/cli.js report",
     "sync-universe": "node src/cli.js sync-universe",
     "log": "node src/cli.js add-log",
     "outcome": "node src/cli.js add-outcome",
     "set-positions": "node src/cli.js set-positions",
-    "set-watchlist": "node src/cli.js set-watchlist"
+    "set-watchlist": "node src/cli.js set-watchlist",
+    "check": "node src/check.js",
+    "smoke": "node src/cli.js state"
   }
 }
