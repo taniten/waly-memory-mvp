@@ -34,6 +34,7 @@ function renderPositions(positions) {
         `qty ${position.quantity}`,
         `last ${position.lastPrice || "n/d"}`,
         `setup ${position.setupType || "n/d"}`,
+        `playbook ${position.playbookType || "n/d"}`,
         `catalyst ${position.catalystType || "n/d"} ${position.catalystDate || ""}`.trim(),
         `thesis: ${position.thesis}`
       ];
@@ -61,6 +62,7 @@ function renderWatchlist(watchlist) {
         `rank ${item.setupRank || "pendiente"}`,
         `score ${item.rankingScore ?? "n/d"}`,
         `setup ${item.setupType || "n/d"}`,
+        `playbook ${item.playbookType || "n/d"}`,
         `rerating ${item.outlierFactors.reratingPotential}`,
         `crowding ${item.outlierFactors.crowdingRisk}`
       ];
@@ -145,6 +147,7 @@ function renderOutlierCandidates(items) {
         item.setupRank,
         `score ${item.rankingScore}`,
         `setup ${item.setupType}`,
+        `playbook ${item.playbookType || "n/d"}`,
         `catalyst ${item.catalystType} ${item.catalystDate || "sin fecha"}`,
         `rerating ${item.outlierFactors.reratingPotential}`,
         `liquidity ${item.outlierFactors.liquidityQuality}`,
@@ -218,6 +221,52 @@ function renderOutcomeStats(summary) {
   return `- ${parts.join(" | ")}`;
 }
 
+function renderPlaybookStats(playbooks) {
+  if (!playbooks) {
+    return "- Sin playbooks medidos todavia.";
+  }
+
+  const ordered = [playbooks.eventSwing, playbooks.outlier].filter(Boolean);
+
+  if (!ordered.length) {
+    return "- Sin playbooks medidos todavia.";
+  }
+
+  return ordered
+    .map((playbook) => {
+      const stats = playbook.stats || {};
+      const parts = [
+        `**${playbook.label}**`,
+        `resueltos ${stats.resolved || 0}`,
+        `abiertos ${stats.open || 0}`
+      ];
+
+      if (typeof stats.winRate === "number") {
+        parts.push(`win rate ${stats.winRate}%`);
+      }
+
+      if (typeof stats.avgResultPct === "number") {
+        parts.push(`avg resultado ${stats.avgResultPct > 0 ? "+" : ""}${stats.avgResultPct}%`);
+      }
+
+      if (typeof stats.hit10Rate === "number") {
+        parts.push(`hit10 ${stats.hit10Rate}%`);
+      }
+
+      if (typeof stats.hit15Rate === "number") {
+        parts.push(`hit15 ${stats.hit15Rate}%`);
+      }
+
+      if (typeof stats.avgDaysToPeak === "number") {
+        parts.push(`dias a pico ${stats.avgDaysToPeak}`);
+      }
+
+      parts.push(`lectura: ${playbook.decisionMessage}`);
+      return `- ${parts.join(" | ")}`;
+    })
+    .join("\n");
+}
+
 function renderOutcomeList(items, emptyMessage) {
   if (!items || items.length === 0) {
     return `- ${emptyMessage}`;
@@ -232,6 +281,10 @@ function renderOutcomeList(items, emptyMessage) {
         item.sourceKind
       ];
 
+      if (item.playbookType) {
+        details.push(`playbook ${item.playbookType}`);
+      }
+
       if (item.setupRankAtEntry) {
         details.push(`rank ${item.setupRankAtEntry}`);
       }
@@ -239,6 +292,18 @@ function renderOutcomeList(items, emptyMessage) {
       if (typeof item.resultPct === "number") {
         const prefix = item.resultPct > 0 ? "+" : "";
         details.push(`resultado ${prefix}${item.resultPct.toFixed(1)}%`);
+      }
+
+      if (item.hit10pct === true) {
+        details.push("hit10 si");
+      } else if (item.hit10pct === false) {
+        details.push("hit10 no");
+      }
+
+      if (item.hit15pct === true) {
+        details.push("hit15 si");
+      } else if (item.hit15pct === false) {
+        details.push("hit15 no");
       }
 
       if (item.resolvedAt) {
@@ -291,6 +356,9 @@ function generateReport() {
     renderOutcomeStats(summary.outcomesSummary),
     "",
     summary.outcomesSummary ? summary.outcomesSummary.decisionMessage : "Sin conclusion de outcomes.",
+    "",
+    "## Playbook Score",
+    renderPlaybookStats(summary.outcomesSummary && summary.outcomesSummary.playbooks),
     "",
     "## Resoluciones recientes",
     renderOutcomeList(summary.outcomesSummary && summary.outcomesSummary.recentResolved, "Sin outcomes resueltos todavia."),

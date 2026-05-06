@@ -4,6 +4,7 @@ const path = require("path");
 const { generateReport } = require("./reporter");
 const { syncUniverse } = require("./universeEngine");
 const {
+  addOutcomeEntry,
   addLogEntry,
   loadState,
   replacePositions,
@@ -17,6 +18,7 @@ function printUsage() {
   node src/cli.js report
   node src/cli.js sync-universe
   node src/cli.js add-log <ruta-json>
+  node src/cli.js add-outcome <ruta-json>
   node src/cli.js set-positions <ruta-json>
   node src/cli.js set-watchlist <ruta-json>`);
 }
@@ -91,12 +93,49 @@ function renderState() {
   if (summary.outcomesSummary.stats.resolved === 0 && summary.outcomesSummary.stats.open === 0) {
     console.log("- Sin outcomes cargados.");
   } else {
-    console.log(
-      `- Resueltos ${summary.outcomesSummary.stats.resolved} | funcionaron ${summary.outcomesSummary.stats.wins} | fallaron ${summary.outcomesSummary.stats.failures} | mixtos ${summary.outcomesSummary.stats.mixed} | abiertos ${summary.outcomesSummary.stats.open}${typeof summary.outcomesSummary.stats.winRate === "number" ? ` | win rate ${summary.outcomesSummary.stats.winRate}%` : ""}`
-    );
+      console.log(
+        `- Resueltos ${summary.outcomesSummary.stats.resolved} | funcionaron ${summary.outcomesSummary.stats.wins} | fallaron ${summary.outcomesSummary.stats.failures} | mixtos ${summary.outcomesSummary.stats.mixed} | abiertos ${summary.outcomesSummary.stats.open}${typeof summary.outcomesSummary.stats.winRate === "number" ? ` | win rate ${summary.outcomesSummary.stats.winRate}%` : ""}`
+      );
     summary.outcomesSummary.recentResolved.forEach((item) => {
       const resultPct = typeof item.resultPct === "number" ? ` | resultado ${item.resultPct > 0 ? "+" : ""}${item.resultPct.toFixed(1)}%` : "";
       console.log(`- ${item.ticker}: ${item.outcomeLabel} | ${item.horizon}${resultPct} | ${item.why}`);
+    });
+  }
+  console.log("");
+  console.log("Playbook score:");
+  const playbookSummaries = [
+    summary.outcomesSummary.playbooks && summary.outcomesSummary.playbooks.eventSwing,
+    summary.outcomesSummary.playbooks && summary.outcomesSummary.playbooks.outlier
+  ].filter(Boolean);
+  if (playbookSummaries.length === 0) {
+    console.log("- Sin playbooks medidos.");
+  } else {
+    playbookSummaries.forEach((playbook) => {
+      const stats = playbook.stats || {};
+      const parts = [
+        playbook.label,
+        `resueltos ${stats.resolved || 0}`,
+        `abiertos ${stats.open || 0}`
+      ];
+
+      if (typeof stats.winRate === "number") {
+        parts.push(`win rate ${stats.winRate}%`);
+      }
+
+      if (typeof stats.avgResultPct === "number") {
+        parts.push(`avg resultado ${stats.avgResultPct > 0 ? "+" : ""}${stats.avgResultPct}%`);
+      }
+
+      if (typeof stats.hit10Rate === "number") {
+        parts.push(`hit10 ${stats.hit10Rate}%`);
+      }
+
+      if (typeof stats.hit15Rate === "number") {
+        parts.push(`hit15 ${stats.hit15Rate}%`);
+      }
+
+      parts.push(playbook.decisionMessage);
+      console.log(`- ${parts.join(" | ")}`);
     });
   }
   console.log("");
@@ -160,6 +199,14 @@ async function main() {
         const filePath = requirePath(argument, "add-log");
         const entry = addLogEntry(filePath);
         console.log(`Revision agregada para ${entry.date}.`);
+        break;
+      }
+      case "add-outcome": {
+        const filePath = requirePath(argument, "add-outcome");
+        const outcome = addOutcomeEntry(filePath);
+        console.log(
+          `Outcome agregado: ${outcome.ticker} | ${outcome.playbookType || "sin playbook"} | ${outcome.loggedAt}.`
+        );
         break;
       }
       case "set-positions": {

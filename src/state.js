@@ -10,6 +10,7 @@ const {
   assertValid,
   mergeValidationResults,
   validateCatalystFeed,
+  validateIncomingOutcomeEntry,
   validateIncomingLogEntry,
   validateLog,
   validateOutcomes,
@@ -204,7 +205,32 @@ function addLogEntry(filePath) {
   return entryWithSnapshot;
 }
 
+function addOutcomeEntry(filePath) {
+  const state = loadState();
+  const nextOutcome = readExternalJson(filePath);
+  const validation = validateIncomingOutcomeEntry(nextOutcome, {
+    currentDate: state.currentDate,
+    existingOutcomes: state.outcomes.outcomes
+  });
+
+  assertValid(validation);
+
+  const nextOutcomes = {
+    updatedAt: new Date().toISOString(),
+    outcomes: [...state.outcomes.outcomes, nextOutcome]
+  };
+  const outcomesValidation = validateOutcomes(nextOutcomes, {
+    currentDate: state.currentDate,
+    fileName: "outcomes.json"
+  });
+
+  assertValid(outcomesValidation);
+  writeJson("outcomes.json", nextOutcomes);
+  return nextOutcome;
+}
+
 module.exports = {
+  addOutcomeEntry,
   addLogEntry,
   getCurrentDateInTimezone,
   getLatestEntry,

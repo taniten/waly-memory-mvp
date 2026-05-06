@@ -21,6 +21,11 @@ const VALID_SETUP_RANKS = [
   "descartar"
 ];
 
+const VALID_PLAYBOOK_TYPES = [
+  "outlier",
+  "event-swing"
+];
+
 const VALID_SOURCE_PLATFORMS = [
   "X",
   "Reddit",
@@ -120,6 +125,7 @@ module.exports = {
   VALID_CATALYST_TYPES,
   VALID_OUTCOME_LABELS,
   VALID_OUTCOME_SOURCE_KINDS,
+  VALID_PLAYBOOK_TYPES,
   VALID_SETUP_RANKS,
   VALID_SOCIAL_SIGNAL_TYPES,
   VALID_SOURCE_PLATFORMS,

@@ -4,6 +4,7 @@ const {
   VALID_CATALYST_TYPES,
   VALID_OUTCOME_LABELS,
   VALID_OUTCOME_SOURCE_KINDS,
+  VALID_PLAYBOOK_TYPES,
   VALID_SETUP_RANKS,
   VALID_SOCIAL_SIGNAL_TYPES,
   VALID_SOURCE_PLATFORMS,
@@ -136,6 +137,34 @@ function validateOptionalNumber(result, value, label, fieldName) {
       result,
       "invalidNumber",
       `${fieldName} debe ser un numero valido si existe.`,
+      `${label}.${fieldName}`
+    );
+  }
+}
+
+function validateOptionalBoolean(result, value, label, fieldName) {
+  if (value !== undefined && typeof value !== "boolean") {
+    pushError(
+      result,
+      "invalidBoolean",
+      `${fieldName} debe ser boolean si existe.`,
+      `${label}.${fieldName}`
+    );
+  }
+}
+
+function validateOptionalInteger(result, value, label, fieldName, options = {}) {
+  const { min = 0 } = options;
+
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Number.isInteger(value) || value < min) {
+    pushError(
+      result,
+      "invalidInteger",
+      `${fieldName} debe ser un entero mayor o igual a ${min}.`,
       `${label}.${fieldName}`
     );
   }
@@ -277,6 +306,21 @@ function validateSetupRank(result, value, label, fieldName) {
   }
 }
 
+function validatePlaybookType(result, value, label, fieldName) {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!isNonEmptyString(value) || !VALID_PLAYBOOK_TYPES.includes(value)) {
+    pushError(
+      result,
+      "invalidPlaybookType",
+      `${fieldName} debe ser uno de ${VALID_PLAYBOOK_TYPES.join(", ")}.`,
+      `${label}.${fieldName}`
+    );
+  }
+}
+
 function validateEnum(result, value, allowedValues, label, fieldName, code) {
   if (!isNonEmptyString(value) || !allowedValues.includes(value)) {
     pushError(
@@ -379,6 +423,7 @@ function validatePositions(data, options = {}) {
     validateOptionalNumber(result, position && position.lastPrice, label, "lastPrice");
     validateOptionalPriority(result, position && position.priority, label, "priority");
     validateCatalystType(result, position && position.catalystType, label, "catalystType");
+    validatePlaybookType(result, position && position.playbookType, label, "playbookType");
     validateOutlierFields(result, position, label);
 
     if (ticker) {
@@ -534,6 +579,7 @@ function validateWatchlist(data, options = {}) {
     validateOptionalString(result, item && item.notes, label, "notes");
     validateOptionalNumber(result, item && item.lastPrice, label, "lastPrice");
     validateCatalystType(result, item && item.catalystType, label, "catalystType");
+    validatePlaybookType(result, item && item.playbookType, label, "playbookType");
     validateOutlierFields(result, item, label);
 
     if (ticker) {
@@ -819,6 +865,45 @@ function validateIncomingLogEntry(entry, options = {}) {
   return result;
 }
 
+function validateIncomingOutcomeEntry(outcome, options = {}) {
+  const { currentDate, existingOutcomes = [] } = options;
+  const result = mergeValidationResults(
+    validateOutcomes(
+      {
+        outcomes: [outcome]
+      },
+      { currentDate, fileName: "incomingOutcome" }
+    )
+  );
+
+  const ticker = normalizeTicker(outcome && outcome.ticker);
+  const playbookType = isNonEmptyString(outcome && outcome.playbookType) ? outcome.playbookType : "";
+  const loggedAt = isNonEmptyString(outcome && outcome.loggedAt) ? outcome.loggedAt : "";
+
+  if (!ticker || !playbookType || !loggedAt) {
+    return result;
+  }
+
+  const isDuplicated = existingOutcomes.some(
+    (item) =>
+      normalizeTicker(item && item.ticker) === ticker &&
+      (item && item.playbookType) === playbookType &&
+      (item && item.loggedAt) === loggedAt
+  );
+
+  if (isDuplicated) {
+    pushError(
+      result,
+      "duplicatedOutcome",
+      `${ticker} ya tiene un outcome para ${playbookType} con loggedAt ${loggedAt}.`,
+      "incomingOutcome",
+      { ticker }
+    );
+  }
+
+  return result;
+}
+
 function validateSettings(settings) {
   const result = createValidationResult();
 
@@ -1046,8 +1131,21 @@ function validateOutcomes(data, options = {}) {
     validateRequiredString(result, outcome && outcome.horizon, label, "horizon");
     validateOptionalString(result, outcome && outcome.setupType, label, "setupType");
     validateSetupRank(result, outcome && outcome.setupRankAtEntry, label, "setupRankAtEntry");
+    validatePlaybookType(result, outcome && outcome.playbookType, label, "playbookType");
     validateOptionalString(result, outcome && outcome.expectedMove, label, "expectedMove");
     validateOptionalNumber(result, outcome && outcome.resultPct, label, "resultPct");
+    validateOptionalNumber(result, outcome && outcome.entryPrice, label, "entryPrice");
+    validateOptionalNumber(result, outcome && outcome.exitPrice, label, "exitPrice");
+    validateOptionalNumber(result, outcome && outcome.peakPriceWithin30d, label, "peakPriceWithin30d");
+    validateOptionalInteger(result, outcome && outcome.daysToPeak, label, "daysToPeak", { min: 0 });
+    validateOptionalNumber(result, outcome && outcome.maxDrawdownPctBeforePeak, label, "maxDrawdownPctBeforePeak");
+    validateOptionalNumber(result, outcome && outcome.return5d, label, "return5d");
+    validateOptionalNumber(result, outcome && outcome.return10d, label, "return10d");
+    validateOptionalNumber(result, outcome && outcome.return20d, label, "return20d");
+    validateOptionalNumber(result, outcome && outcome.return30d, label, "return30d");
+    validateOptionalBoolean(result, outcome && outcome.hit10pct, label, "hit10pct");
+    validateOptionalBoolean(result, outcome && outcome.hit15pct, label, "hit15pct");
+    validateOptionalBoolean(result, outcome && outcome.failedFast, label, "failedFast");
     validateEnum(
       result,
       outcome && outcome.outcomeLabel,
@@ -1105,6 +1203,20 @@ function validateOutcomes(data, options = {}) {
 
     if (
       outcome &&
+      outcome.outcomeLabel !== "abierto" &&
+      !isNonEmptyString(outcome.playbookType)
+    ) {
+      pushWarning(
+        result,
+        "missingPlaybookType",
+        `${ticker || label} no tiene playbookType cargado para medir el loop por estrategia.`,
+        `${label}.playbookType`,
+        { ticker }
+      );
+    }
+
+    if (
+      outcome &&
       isNonEmptyString(outcome.loggedAt) &&
       isNonEmptyString(outcome.resolvedAt) &&
       isValidDateOnlyString(outcome.loggedAt) &&
@@ -1153,6 +1265,7 @@ module.exports = {
   normalizeTicker,
   parseDateOnlyToUtc,
   validateCatalystFeed,
+  validateIncomingOutcomeEntry,
   validateIncomingLogEntry,
   validateLog,
   validatePositions,
