@@ -118,6 +118,17 @@ cp examples/fda.example.json data/fda.json
 
 `data/universe_candidates.json` no es obligatorio para `state` o `report`; WALY lo genera cuando corres `node src/cli.js sync-universe`.
 
+## Reglas de higiene operativa WALY
+
+- `positions.json` solo contiene posiciones abiertas reales.
+- `watchlist.json` solo contiene ideas vivas accionables.
+- `outcomes.json` registra todo trade cerrado, incluso si fue chico.
+- `daily_log.json` debe explicar altas y bajas relevantes del estado operativo.
+- Feeds como `insiders`, `earnings`, `fda` y `social_signals` no deben arrastrar tickers viejos al estado activo.
+- Si un ticker no tiene `catalystType` verificable, no puede clasificarse como `A+` WALY.
+- Todo reset operativo debe hacerse con backup previo.
+- `data/*.json` es memoria local privada y no debe versionarse.
+
 ## Uso rapido
 
 ```bash
