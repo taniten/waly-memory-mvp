@@ -1,0 +1,15 @@
+{
+  "name": "waly-memory-mvp",
+  "version": "1.2.0",
+  "private": true,
+  "description": "Sistema local stateful para cazar pocas apuestas de alta asimetria en WALY.",
+  "type": "commonjs",
+  "scripts": {
+    "state": "node src/cli.js state",
+    "report": "node src/cli.js report",
+    "sync-universe": "node src/cli.js sync-universe",
+    "log": "node src/cli.js add-log",
+    "set-positions": "node src/cli.js set-positions",
+    "set-watchlist": "node src/cli.js set-watchlist"
+  }
+}

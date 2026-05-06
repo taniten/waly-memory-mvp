@@ -1,0 +1,59 @@
+{
+  "projectName": "WALY Outlier Hunt v1",
+  "timezone": "America/Argentina/Buenos_Aires",
+  "currency": "USD",
+  "maxNewOpportunities": 3,
+  "reportPrefix": "waly-outlier-hunt-report",
+  "connectors": {
+    "syncUniverse": {
+      "candidateLimit": 30,
+      "earningsHorizonDays": 30,
+      "insiderLookbackDays": 21,
+      "fdaLookbackDays": 45,
+      "minPrice": 2,
+      "minDollarVolume": 10000000,
+      "minRelativeVolume": 1.25,
+      "minAbsoluteDayChangePct": 4,
+      "nextReviewOffsetDays": 2
+    },
+    "polygon": {
+      "enabled": false,
+      "baseUrl": "https://api.polygon.io",
+      "seedMode": "full-market",
+      "marketSnapshotLimit": 50,
+      "timeoutMs": 20000
+    },
+    "sec": {
+      "enabled": false,
+      "baseUrl": "https://data.sec.gov",
+      "tickerMapUrl": "https://www.sec.gov/files/company_tickers_exchange.json",
+      "formTypes": [
+        "4",
+        "4/A"
+      ],
+      "maxTickersPerSync": 25,
+      "requestDelayMs": 150,
+      "timeoutMs": 20000
+    },
+    "openfda": {
+      "enabled": false,
+      "baseUrl": "https://api.fda.gov",
+      "maxCompaniesPerSync": 15,
+      "limitPerCompany": 5,
+      "timeoutMs": 20000,
+      "companyMap": {
+        "DEMO": "DEMO THERAPEUTICS"
+      }
+    },
+    "finviz": {
+      "enabled": false,
+      "timeoutMs": 20000,
+      "savedScreens": []
+    },
+    "openinsider": {
+      "enabled": false,
+      "timeoutMs": 20000,
+      "savedScreens": []
+    }
+  }
+}

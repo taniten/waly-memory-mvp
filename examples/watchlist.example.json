@@ -1,0 +1,40 @@
+{
+  "updatedAt": "2026-01-15T00:00:00.000Z",
+  "watchlist": [
+    {
+      "ticker": "TEST",
+      "priority": 1,
+      "status": "observar",
+      "thesis": "Ticker ficticio para mostrar como documentar una watchlist prioritaria.",
+      "rationale": "Sirve como plantilla para una idea con catalyst verificable pero sin posicion abierta.",
+      "catalyst": "Gap con volumen inusual de ejemplo que amerita seguimiento, no conviccion ciega.",
+      "catalystType": "unusual-volume-gap",
+      "catalystDate": "2026-01-18",
+      "lastReviewedAt": "2026-01-15",
+      "assetType": "equity",
+      "market": "US",
+      "exchange": "NYSE",
+      "catalystWindow": "2026-01-18",
+      "invalidation": "Descartar si el movimiento se sostiene solo por hype y no por liquidez real.",
+      "nextReviewAt": "2026-01-18",
+      "lastPrice": 8.4,
+      "notes": "Plantilla segura con datos ficticios.",
+      "source": "examples/watchlist.example.json",
+      "catalystStrength": 3,
+      "liquidityQuality": 3,
+      "momentumQuality": 3,
+      "breakoutReadiness": 2,
+      "reratingPotential": 2,
+      "insiderSupport": 1,
+      "socialDiscoveryScore": 2,
+      "crowdingRisk": 2,
+      "downsideClarity": 3,
+      "setupType": "demo-watchlist-template",
+      "setupRank": "B",
+      "playbookType": "event-swing",
+      "socialSignals": [
+        "Reddit: ejemplo de mencion temprana que exige confirmacion"
+      ]
+    }
+  ]
+}

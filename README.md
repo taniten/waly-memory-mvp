@@ -1,0 +1,398 @@
+# WALY Outlier Hunt v1
+
+Sistema local, stateful y sin dependencias externas para detectar pocas apuestas de alta asimetria en equities. WALY usa memoria persistente, catalysts verificables, price action, volumen, insider support e ingesta social temprana como radar, pero nunca como sustituto de datos duros.
+
+## Principio clave
+
+- social = discovery
+- data = conviction
+
+WALY no compra narrativa sola. La capa social solo sirve para descubrir antes. La conviccion final siempre depende de catalyst, precio, volumen, liquidez y estructura.
+
+## Dos playbooks, una disciplina
+
+WALY puede convivir con dos juegos distintos sin confundirlos:
+
+- `outlier`: pocas apuestas, mucha asimetria, paciencia, buscar reratings grandes
+- `event-swing`: catalyst cercano, entrada tactica, objetivo frecuente de `+10%` a `+15%` en `5-30` dias
+
+La regla es simple: no mezclar ambos loops. Si un setup no es `A+`, igual puede servir como `event-swing`, pero debe medirse como tal.
+
+## Que busca WALY
+
+No intenta rankear “buenas ideas” en general. Busca pocas configuraciones con potencial de outlier real, idealmente con asimetria suficiente como para justificar una tesis x2+ si el catalyst y la estructura se alinean.
+
+## Principios
+
+- Local y simple
+- Sin APIs obligatorias
+- Con conectores opcionales que degradan a modo local si faltan credenciales
+- Sin base de datos
+- Sin frontend
+- Sin automatizacion de ordenes
+- Sin dependencias innecesarias
+- Posiciones abiertas primero
+- Maximo `0-3` oportunidades finales
+
+## Estructura
+
+```text
+waly-memory-mvp/
+  data/
+    earnings.json
+    insiders.json
+    fda.json
+    social_signals.json
+    outcomes.json
+    universe_candidates.json
+    positions.json
+    watchlist.json
+    daily_log.json
+    settings.json
+    .gitkeep
+  examples/
+    positions.example.json
+    watchlist.example.json
+    daily_log.example.json
+    settings.example.json
+    nueva-revision.example.json
+    nuevo-outcome.example.json
+    social_signals.example.json
+    outcomes.example.json
+    earnings.example.json
+    insiders.example.json
+    fda.example.json
+  ejemplos/
+    nueva-revision.json
+  reports/
+    .gitkeep
+  src/
+    cli.js
+    compareState.js
+    connectors/
+    constants.js
+    decisionEngine.js
+    eventEngine.js
+    outcomeEngine.js
+    rankingEngine.js
+    reporter.js
+    state.js
+    storage.js
+    universeEngine.js
+    validators.js
+  AGENTS.md
+  README.md
+  package.json
+```
+
+## Datos locales y privacidad
+
+`data/` y `reports/` quedan fuera del versionado publico porque pueden contener posiciones reales, watchlists, configuraciones, catalysts y reportes operativos. Los archivos de `examples/` son plantillas sanitizadas con tickers ficticios (`DEMO`, `TEST`, `FAKE`) para explicar la estructura sin exponer informacion sensible.
+
+Si clonas el repo o queres arrancar desde cero, copia las plantillas seguras hacia `data/` antes de correr WALY:
+
+```bash
+cp examples/positions.example.json data/positions.json
+cp examples/watchlist.example.json data/watchlist.json
+cp examples/daily_log.example.json data/daily_log.json
+cp examples/settings.example.json data/settings.json
+cp examples/social_signals.example.json data/social_signals.json
+cp examples/outcomes.example.json data/outcomes.json
+cp examples/earnings.example.json data/earnings.json
+cp examples/insiders.example.json data/insiders.json
+cp examples/fda.example.json data/fda.json
+```
+
+`data/universe_candidates.json` no es obligatorio para `state` o `report`; WALY lo genera cuando corres `node src/cli.js sync-universe`.
+
+## Uso rapido
+
+```bash
+node src/cli.js state
+node src/cli.js report
+node src/cli.js sync-universe
+node src/cli.js add-log ./examples/nueva-revision.example.json
+node src/cli.js add-outcome ./examples/nuevo-outcome.example.json
+node src/cli.js set-positions ./mi-positions.json
+node src/cli.js set-watchlist ./mi-watchlist.json
+```
+
+Atajos disponibles via `npm run`:
+
+```bash
+npm run state
+npm run report
+npm run sync-universe
+npm run log -- ./examples/nueva-revision.example.json
+npm run outcome -- ./examples/nuevo-outcome.example.json
+npm run set-positions -- ./mi-positions.json
+npm run set-watchlist -- ./mi-watchlist.json
+```
+
+En PowerShell puede convenir usar `node src/cli.js ...` si `npm.ps1` esta bloqueado por policy local.
+
+## Capas del sistema
+
+### Datos duros
+
+- catalysts verificables
+- precio y volumen
+- liquidez
+- downside claro
+- rerating potential
+
+### Discovery temprano
+
+- señales en X
+- Reddit
+- foros
+- Substack
+
+La capa social puede sumar contexto y timing. Nunca define sola un `A+`.
+
+## Scoring outlier
+
+WALY rankea cada ticker usando estas variables conceptuales:
+
+- `catalystStrength`
+- `catalystWindow`
+- `liquidityQuality`
+- `momentumQuality`
+- `breakoutReadiness`
+- `reratingPotential`
+- `insiderSupport`
+- `socialDiscoveryScore`
+- `crowdingRisk`
+- `downsideClarity`
+
+Reglas del ranking:
+
+- `socialDiscoveryScore` puede sumar, pero no dominar
+- `crowdingRisk` alto resta puntos
+- sin catalyst verificable no hay `A+`
+- sin liquidez real no hay `A+`
+- si la estructura ya esta demasiado extendida, se penaliza
+- `A+` queda reservado para setups con verdadera asimetria
+- si no hay edge real, WALY devuelve `0`
+
+## Esquema de datos
+
+### `data/positions.json`
+
+Cada posicion puede incluir:
+
+- `ticker`
+- `quantity`
+- `avgPrice`
+- `lastPrice`
+- `priority`
+- `status`
+- `thesis`
+- `conviction`
+- `notes`
+- `catalyst`
+- `catalystType`
+- `catalystDate`
+- `invalidation`
+- `source`
+- `catalystStrength`
+- `liquidityQuality`
+- `momentumQuality`
+- `breakoutReadiness`
+- `reratingPotential`
+- `insiderSupport`
+- `socialDiscoveryScore`
+- `crowdingRisk`
+- `downsideClarity`
+- `setupType`
+- `setupRank`
+- `socialSignals`
+
+### `data/watchlist.json`
+
+Cada ticker puede incluir el mismo set conceptual que posiciones, mas:
+
+- `rationale`
+- `catalystWindow`
+- `nextReviewAt`
+
+### `data/social_signals.json`
+
+Cada señal puede incluir:
+
+- `ticker`
+- `sourcePlatform`
+- `sourceHandle`
+- `signalType`
+- `timestamp`
+- `claim`
+- `verificationStatus`
+- `independenceScore`
+- `crowdingRisk`
+- `notes`
+
+La idea de este archivo es muy simple:
+
+- detectar discovery temprano
+- medir crowding
+- dejar trazabilidad de quien dijo que
+- no transformar social en conviccion automatica
+
+### `data/outcomes.json`
+
+Cada outcome puede incluir:
+
+- `ticker`
+- `sourceKind`
+- `playbookType`
+- `loggedAt`
+- `resolvedAt`
+- `horizon`
+- `setupType`
+- `setupRankAtEntry`
+- `expectedMove`
+- `resultPct`
+- `entryPrice`
+- `exitPrice`
+- `peakPriceWithin30d`
+- `daysToPeak`
+- `maxDrawdownPctBeforePeak`
+- `return5d`
+- `return10d`
+- `return20d`
+- `return30d`
+- `hit10pct`
+- `hit15pct`
+- `failedFast`
+- `outcomeLabel`
+- `why`
+- `lessons`
+- `metadata`
+
+Este archivo cierra el loop que mas importa:
+
+- que ideas funcionaron
+- cuales fallaron
+- donde hubo setup real vs narrativa prolija
+- que aprendizaje queda para recalibrar WALY
+- si el playbook `event-swing` realmente captura movimientos repetibles de `10%` a `15%`
+
+### `data/universe_candidates.json`
+
+Es la salida local del discovery externo:
+
+- junta candidatos desde market data y catalysts externos
+- no reemplaza la watchlist real
+- sirve como bandeja de entrada para ampliar universo
+- mantiene el repo simple porque todo termina en JSON local
+
+## Motores
+
+### `src/eventEngine.js`
+
+Construye el universo outlier:
+
+- integra catalysts ingeridos
+- integra señales sociales por ticker
+- enriquece manualmente la watchlist y posiciones
+- calcula factores conceptuales de asimetria
+- detecta mismatches de catalyst
+- deja social subordinado a la capa dura
+
+### `src/rankingEngine.js`
+
+Hace ranking por potencial de outlier:
+
+- sube el peso de catalyst, liquidez, rerating y downside
+- limita el impacto de social
+- penaliza crowding e hipotesis extendidas
+- solo deja `A+` cuando la asimetria parece real
+
+### `src/decisionEngine.js`
+
+Hace disciplina operativa:
+
+- mantiene posiciones primero
+- detecta hype sin confirmacion
+- detecta crowding excesivo
+- detecta catalyst debil
+- detecta falta de downsideClarity
+- devuelve una decision final brutal y clara
+
+### `src/outcomeEngine.js`
+
+Hace memoria de resultados:
+
+- resume outcomes abiertos y resueltos
+- separa funciono / fallo / mixto
+- deja win rate y muestra util
+- obliga a revisar por que una tesis funciono o no
+
+### `src/universeEngine.js`
+
+Hace universe seeding con APIs opcionales:
+
+- usa Polygon para snapshot y earnings cuando hay API key
+- usa SEC EDGAR para insider / Form 4 recientes
+- usa openFDA para actividad FDA reciente
+- acepta Finviz via URL configurable si tenes export/API disponible
+- escribe candidatos locales en `data/universe_candidates.json`
+
+## Reporte diario
+
+`node src/cli.js report` genera un Markdown con:
+
+- cartera actual
+- watchlist prioritaria
+- catalysts activos
+- social signals relevantes
+- crowding warnings
+- top `0-3` outlier candidates
+- outcome loop con ideas resueltas y abiertas
+- checks de integridad
+- cambios desde la ultima revision
+- alertas y conflictos
+- decision final brutal y clara
+
+## Sync de universo
+
+`node src/cli.js sync-universe` corre una capa de discovery externa y deja todo local:
+
+- market snapshot y liquidez desde Polygon
+- earnings futuros desde Polygon Benzinga Earnings
+- insider catalysts desde SEC EDGAR
+- actividad FDA reciente desde openFDA
+- import opcional desde Finviz si configuraste una URL de export/API
+
+El resultado se guarda en `data/universe_candidates.json`.
+Si hay datos validos, WALY tambien actualiza `data/earnings.json`, `data/insiders.json` y `data/fda.json` sin agregar dependencias.
+
+## Variables de entorno
+
+Para correr conectores reales:
+
+- `POLYGON_API_KEY`
+- `SEC_USER_AGENT`
+- `OPENFDA_API_KEY` opcional
+- `FINVIZ_SCREENER_URL` opcional
+- `FINVIZ_API_TOKEN` opcional
+
+Notas:
+
+- SEC y openFDA pueden funcionar sin key, pero SEC requiere un `User-Agent` identificable.
+- Finviz queda como conector configurable porque la URL exacta depende de tu acceso/export oficial.
+- Si faltan credenciales, WALY no rompe: marca el provider como no disponible y sigue local.
+
+## Flujo sugerido
+
+1. Actualizar `data/positions.json`.
+2. Actualizar `data/watchlist.json`.
+3. Actualizar `data/earnings.json`, `data/insiders.json` y `data/fda.json`.
+4. Registrar nuevas señales en `data/social_signals.json`.
+5. Actualizar `data/outcomes.json` cuando una tesis se resuelve o sigue abierta.
+   Tip: podes cargar un outcome nuevo con `node src/cli.js add-outcome <ruta-json>`.
+6. Correr `node src/cli.js sync-universe` para ampliar discovery externo.
+7. Revisar `data/universe_candidates.json` y promover solo lo que merezca entrar a watchlist.
+8. Correr `node src/cli.js state`.
+9. Generar el reporte con `node src/cli.js report`.
+10. Solo promover a oportunidad final lo que sobreviva a catalyst, liquidez, estructura y downside.

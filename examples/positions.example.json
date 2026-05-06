@@ -1,0 +1,41 @@
+{
+  "updatedAt": "2026-01-15T00:00:00.000Z",
+  "positions": [
+    {
+      "ticker": "DEMO",
+      "quantity": 100,
+      "avgPrice": 12.5,
+      "lastPrice": 13.1,
+      "priority": 1,
+      "status": "mantener",
+      "thesis": "Posicion ficticia para mostrar la estructura minima de una posicion abierta.",
+      "conviction": "media",
+      "notes": "Datos de ejemplo. Reemplazar por informacion local real antes de usar WALY en serio.",
+      "catalyst": "Resultados trimestrales de ejemplo con reaccion de precio moderada.",
+      "catalystType": "earnings",
+      "catalystDate": "2026-01-20",
+      "lastReviewedAt": "2026-01-15",
+      "nextReviewAt": "2026-01-20",
+      "assetType": "equity",
+      "market": "US",
+      "exchange": "NASDAQ",
+      "invalidation": "Salir si pierde soporte ficticio o si el catalyst deja de ser verificable.",
+      "source": "examples/positions.example.json",
+      "catalystStrength": 3,
+      "liquidityQuality": 4,
+      "momentumQuality": 2,
+      "breakoutReadiness": 2,
+      "reratingPotential": 2,
+      "insiderSupport": 1,
+      "socialDiscoveryScore": 1,
+      "crowdingRisk": 1,
+      "downsideClarity": 3,
+      "setupType": "demo-earnings-template",
+      "setupRank": "B",
+      "playbookType": "event-swing",
+      "socialSignals": [
+        "X: ejemplo de discovery temprano sin conviction automatica"
+      ]
+    }
+  ]
+}

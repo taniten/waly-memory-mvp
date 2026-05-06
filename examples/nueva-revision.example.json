@@ -1,0 +1,20 @@
+{
+  "date": "2026-01-16",
+  "marketContext": "Sesion ficticia con interes selectivo en small caps y poca conviccion general.",
+  "portfolioChanges": [
+    "DEMO sigue en mantener; no cambia la thesis mientras el catalyst de earnings permanezca intacto."
+  ],
+  "watchlistChanges": [
+    "TEST conserva prioridad 1 y se mantiene en observar a la espera de confirmacion."
+  ],
+  "newOpportunities": [
+    {
+      "ticker": "FAKE",
+      "status": "nueva oportunidad",
+      "thesis": "Setup ficticio para practicar el alta de una revision diaria.",
+      "whyNow": "Hay un catalyst verificable de ejemplo, liquidez aceptable y crowding controlado."
+    }
+  ],
+  "decision": "Mantener DEMO primero, seguir TEST y dejar FAKE solo como radar inicial.",
+  "justification": "La cartera abierta sigue primero y no se reemplaza ninguna thesis previa sin dejar registro claro."
+}

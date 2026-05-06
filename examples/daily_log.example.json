@@ -1,0 +1,25 @@
+{
+  "updatedAt": "2026-01-15T00:00:00.000Z",
+  "entries": [
+    {
+      "date": "2026-01-15",
+      "marketContext": "Mercado ficticio de ejemplo con rotacion moderada y liquidez estable.",
+      "portfolioChanges": [
+        "DEMO sigue en mantener mientras el catalyst de ejemplo permanezca verificable."
+      ],
+      "watchlistChanges": [
+        "TEST queda en observar hasta confirmar follow-through real de precio y volumen."
+      ],
+      "newOpportunities": [
+        {
+          "ticker": "FAKE",
+          "status": "nueva oportunidad",
+          "thesis": "Idea ficticia para ilustrar el formato de ingreso diario.",
+          "whyNow": "Aparecio un catalyst verificable de ejemplo y todavia no domina el crowding."
+        }
+      ],
+      "decision": "Mantener la cartera ficticia primero, observar TEST y no promover FAKE mas alla de seguimiento inicial.",
+      "justification": "La memoria local sigue priorizando posiciones abiertas y limita nuevas oportunidades a lo que tenga catalyst verificable."
+    }
+  ]
+}

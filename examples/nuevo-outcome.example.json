@@ -1,0 +1,23 @@
+{
+  "ticker": "TEST",
+  "sourceKind": "watchlist",
+  "playbookType": "event-swing",
+  "loggedAt": "2026-01-16",
+  "resolvedAt": "2026-01-23",
+  "horizon": "5d",
+  "setupType": "demo-outcome-template",
+  "setupRankAtEntry": "B",
+  "expectedMove": "Movimiento ficticio de ejemplo para probar add-outcome sin exponer datos reales.",
+  "resultPct": 7.2,
+  "return5d": 7.2,
+  "daysToPeak": 5,
+  "hit10pct": false,
+  "hit15pct": false,
+  "failedFast": false,
+  "outcomeLabel": "mixto",
+  "why": "La plantilla muestra un resultado parcial para practicar el cierre de una tesis.",
+  "lessons": "Usar este archivo solo como ejemplo; reemplazar por observaciones locales reales.",
+  "metadata": {
+    "catalystType": "unusual-volume-gap"
+  }
+}
