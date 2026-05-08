@@ -11,6 +11,10 @@ data/*.json.bak
 reports/*.md
 reports/*.md.bak
 !reports/.gitkeep
+backtests/*.md
+backtests/*.json
+backtests/*.bak
+!backtests/.gitkeep
 waly-daily-report*.md
 waly-outlier-hunt-report*.md
 nueva-revision.json

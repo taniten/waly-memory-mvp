@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("path");
+const { generateBacktestReport } = require("./backtestEngine");
 const { initData } = require("./initData");
 const { generateReport } = require("./reporter");
 const { syncUniverse } = require("./universeEngine");
@@ -18,6 +19,7 @@ function printUsage() {
   node src/cli.js init-data
   node src/cli.js state
   node src/cli.js report
+  node src/cli.js backtest [--dry-run]
   node src/cli.js sync-universe
   node src/cli.js add-log <ruta-json>
   node src/cli.js add-outcome <ruta-json>
@@ -174,7 +176,8 @@ function requirePath(argument, commandName) {
 
 async function main() {
   const command = process.argv[2];
-  const argument = process.argv[3];
+  const args = process.argv.slice(3);
+  const argument = args[0];
 
   try {
     switch (command) {
@@ -187,6 +190,24 @@ async function main() {
       case "report": {
         const result = generateReport();
         console.log(`Reporte generado: ${result.reportPath}`);
+        break;
+      }
+      case "backtest": {
+        const dryRun = args.includes("--dry-run") || args.includes("--stdout");
+        const result = generateBacktestReport({ dryRun });
+
+        if (dryRun) {
+          console.log("Outcome backtest summary generado desde outcomes registrados; no es simulacion ex-ante.");
+          console.log("");
+          console.log(result.markdown);
+          console.log("");
+          console.log(`Muestra resuelta: ${result.sampleSize}`);
+          break;
+        }
+
+        console.log("Outcome backtest summary generado desde outcomes registrados; no es simulacion ex-ante.");
+        console.log(`Output generado: ${result.outputPath}`);
+        console.log(`Muestra resuelta: ${result.sampleSize}`);
         break;
       }
       case "sync-universe": {

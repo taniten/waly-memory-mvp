@@ -6,6 +6,7 @@ const path = require("path");
 const ROOT_DIR = path.resolve(__dirname, "..");
 const DATA_DIR = path.join(ROOT_DIR, "data");
 const REPORTS_DIR = path.join(ROOT_DIR, "reports");
+const BACKTESTS_DIR = path.join(ROOT_DIR, "backtests");
 
 function formatRelativePath(filePath) {
   return path.relative(ROOT_DIR, filePath).split(path.sep).join("/");
@@ -64,6 +65,10 @@ function ensureReportsDir() {
   fs.mkdirSync(REPORTS_DIR, { recursive: true });
 }
 
+function ensureBacktestsDir() {
+  fs.mkdirSync(BACKTESTS_DIR, { recursive: true });
+}
+
 function writeReport(fileName, markdown) {
   ensureReportsDir();
   const reportPath = path.join(REPORTS_DIR, fileName);
@@ -71,10 +76,19 @@ function writeReport(fileName, markdown) {
   return reportPath;
 }
 
+function writeBacktestOutput(fileName, contents) {
+  ensureBacktestsDir();
+  const outputPath = path.join(BACKTESTS_DIR, fileName);
+  writeFileAtomic(outputPath, contents);
+  return outputPath;
+}
+
 module.exports = {
+  BACKTESTS_DIR,
   DATA_DIR,
   REPORTS_DIR,
   readJson,
+  writeBacktestOutput,
   writeJson,
   writeReport
 };

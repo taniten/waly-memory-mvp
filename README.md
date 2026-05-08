@@ -138,6 +138,7 @@ cp examples/fda.example.json data/fda.json
 node src/cli.js init-data
 node src/cli.js state
 node src/cli.js report
+node src/cli.js backtest
 node src/cli.js sync-universe
 node src/cli.js add-log ./examples/nueva-revision.example.json
 node src/cli.js add-outcome ./examples/nuevo-outcome.example.json
@@ -151,6 +152,7 @@ Atajos disponibles via `npm run`:
 npm run init-data
 npm run state
 npm run report
+npm run backtest
 npm run sync-universe
 npm run log -- ./examples/nueva-revision.example.json
 npm run outcome -- ./examples/nuevo-outcome.example.json
@@ -307,20 +309,26 @@ Cada outcome puede incluir:
 - `horizon`
 - `setupType`
 - `setupRankAtEntry`
+- `assetType`
+- `catalystType`
 - `expectedMove`
 - `resultPct`
 - `entryPrice`
 - `exitPrice`
+- `peakPriceWithinWindow`
 - `peakPriceWithin30d`
+- `maxPostEntryReturnPct`
 - `daysToPeak`
 - `maxDrawdownPctBeforePeak`
 - `return5d`
 - `return10d`
 - `return20d`
 - `return30d`
+- `hit7pct`
 - `hit10pct`
 - `hit15pct`
 - `failedFast`
+- `falsePositive`
 - `outcomeLabel`
 - `why`
 - `lessons`
@@ -410,6 +418,37 @@ Hace universe seeding con APIs opcionales:
 - cambios desde la ultima revision
 - alertas y conflictos
 - decision final brutal y clara
+
+## Outcome Backtest Summary WALY 2.5
+
+`node src/cli.js backtest` genera un Markdown separado en `backtests/` con foco en auditar outcomes ya registrados manualmente:
+
+- no es simulacion ex-ante
+- no genera senales historicas
+- no consulta precios historicos reales
+- no tiene checkpoint/resume para corridas largas
+- sirve para resumir performance historica que ya fue cargada en `data/outcomes.json`
+
+- corta la muestra por `5d`, `10d`, `20d` y `30d`
+- resume `event-swing` y `outlier`
+- separa `equity` vs `etf`, dejando ETFs tacticos estandar y apalancados/inversos como modulo aparte
+- mide retorno maximo posterior, drawdown antes del pico, hit `+7%`, `+10%`, `+15%`, dias hasta pico y falso positivo
+- muestra mezcla de `setupRankAtEntry`, `catalystType`, `playbookType` y `assetType`
+
+Para que el backtest sea mas limpio, conviene cargar estos campos en cada outcome nuevo:
+
+- `assetType`: `equity` o `etf`
+- `catalystType`: `earnings`, `insider`, `fda`, `unusual-volume-gap`
+- `maxPostEntryReturnPct`: mejor retorno alcanzado dentro de la ventana medida
+- `peakPriceWithinWindow`: opcional si queres dejar trazabilidad de precio
+- `hit7pct`, `hit10pct`, `hit15pct`
+- `falsePositive`
+
+Si queres auditar sin escribir archivos:
+
+```bash
+node src/cli.js backtest --dry-run
+```
 
 ## Sync de universo
 

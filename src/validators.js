@@ -1406,20 +1406,26 @@ function validateOutcomes(data, options = {}) {
     validateOptionalString(result, outcome && outcome.setupType, label, "setupType");
     validateSetupRank(result, outcome && outcome.setupRankAtEntry, label, "setupRankAtEntry");
     validatePlaybookType(result, outcome && outcome.playbookType, label, "playbookType");
+    validateOptionalString(result, outcome && outcome.assetType, label, "assetType");
+    validateCatalystType(result, outcome && outcome.catalystType, label, "catalystType");
     validateOptionalString(result, outcome && outcome.expectedMove, label, "expectedMove");
     validateOptionalNumber(result, outcome && outcome.resultPct, label, "resultPct");
     validateOptionalNumber(result, outcome && outcome.entryPrice, label, "entryPrice");
     validateOptionalNumber(result, outcome && outcome.exitPrice, label, "exitPrice");
+    validateOptionalNumber(result, outcome && outcome.peakPriceWithinWindow, label, "peakPriceWithinWindow");
     validateOptionalNumber(result, outcome && outcome.peakPriceWithin30d, label, "peakPriceWithin30d");
+    validateOptionalNumber(result, outcome && outcome.maxPostEntryReturnPct, label, "maxPostEntryReturnPct");
     validateOptionalInteger(result, outcome && outcome.daysToPeak, label, "daysToPeak", { min: 0 });
     validateOptionalNumber(result, outcome && outcome.maxDrawdownPctBeforePeak, label, "maxDrawdownPctBeforePeak");
     validateOptionalNumber(result, outcome && outcome.return5d, label, "return5d");
     validateOptionalNumber(result, outcome && outcome.return10d, label, "return10d");
     validateOptionalNumber(result, outcome && outcome.return20d, label, "return20d");
     validateOptionalNumber(result, outcome && outcome.return30d, label, "return30d");
+    validateOptionalBoolean(result, outcome && outcome.hit7pct, label, "hit7pct");
     validateOptionalBoolean(result, outcome && outcome.hit10pct, label, "hit10pct");
     validateOptionalBoolean(result, outcome && outcome.hit15pct, label, "hit15pct");
     validateOptionalBoolean(result, outcome && outcome.failedFast, label, "failedFast");
+    validateOptionalBoolean(result, outcome && outcome.falsePositive, label, "falsePositive");
     validateEnum(
       result,
       outcome && outcome.outcomeLabel,
