@@ -2,6 +2,9 @@
 
 const {
   VALID_CATALYST_TYPES,
+  VALID_ETF_CATEGORIES,
+  VALID_HOLDING_RULES,
+  VALID_INSTRUMENT_STRUCTURES,
   VALID_OUTCOME_LABELS,
   VALID_OUTCOME_SOURCE_KINDS,
   VALID_PLAYBOOK_TYPES,
@@ -276,6 +279,231 @@ function validateOptionalStringArray(result, value, label, fieldName) {
   });
 }
 
+function validateOptionalEnum(result, value, allowedValues, label, fieldName, code) {
+  if (value === undefined) {
+    return;
+  }
+
+  validateEnum(result, value, allowedValues, label, fieldName, code);
+}
+
+function validateOptionalPercentage(result, value, label, fieldName) {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!isFiniteNumber(value) || value <= 0 || value > 100) {
+    pushError(
+      result,
+      "invalidPercentage",
+      `${fieldName} debe ser un numero mayor a 0 y menor o igual a 100.`,
+      `${label}.${fieldName}`
+    );
+  }
+}
+
+function normalizeTextEnum(value) {
+  return isNonEmptyString(value) ? value.trim().toLowerCase() : "";
+}
+
+function isEtfAsset(item) {
+  return normalizeTextEnum(item && item.assetType) === "etf";
+}
+
+function hasValidUnderlyingConfirmation(underlyingConfirmation) {
+  return Boolean(
+    underlyingConfirmation &&
+      typeof underlyingConfirmation === "object" &&
+      !Array.isArray(underlyingConfirmation) &&
+      isNonEmptyString(underlyingConfirmation.benchmark) &&
+      typeof underlyingConfirmation.trendConfirmed === "boolean" &&
+      isNonEmptyString(underlyingConfirmation.invalidatesIf)
+  );
+}
+
+function validateUnderlyingConfirmation(result, value, label, fieldName) {
+  if (value === undefined) {
+    return;
+  }
+
+  validateOptionalObject(result, value, label, fieldName);
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return;
+  }
+
+  validateRequiredString(result, value.benchmark, `${label}.${fieldName}`, "benchmark");
+
+  if (typeof value.trendConfirmed !== "boolean") {
+    pushError(
+      result,
+      "invalidBoolean",
+      "trendConfirmed debe ser boolean dentro de underlyingConfirmation.",
+      `${label}.${fieldName}.trendConfirmed`
+    );
+  }
+
+  validateOptionalString(result, value.macroCatalyst, `${label}.${fieldName}`, "macroCatalyst");
+  validateRequiredString(result, value.invalidatesIf, `${label}.${fieldName}`, "invalidatesIf");
+}
+
+function isLeveragedInverseEtf(item) {
+  if (!isEtfAsset(item)) {
+    return false;
+  }
+
+  const category = normalizeTextEnum(item && item.etfCategory);
+  const leverageFactor = item && item.leverageFactor;
+  const inverse = item && item.inverse === true;
+
+  return (
+    category === "leveraged" ||
+    category === "inverse" ||
+    category === "leveraged-inverse" ||
+    inverse ||
+    (isFiniteNumber(leverageFactor) && leverageFactor > 1)
+  );
+}
+
+function needsManualEtfReview(item) {
+  if (!isEtfAsset(item)) {
+    return false;
+  }
+
+  const category = normalizeTextEnum(item && item.etfCategory);
+  const structure = normalizeTextEnum(item && item.instrumentStructure);
+
+  return (
+    category === "volatility" ||
+    category === "single-stock-leveraged" ||
+    structure === "etn" ||
+    structure === "unknown"
+  );
+}
+
+function validateEtfFields(result, item, label, options = {}) {
+  const { includeOperationalWarnings = true, source, ticker } = options;
+
+  validateOptionalEnum(result, item && item.holdingRule, VALID_HOLDING_RULES, label, "holdingRule", "invalidHoldingRule");
+  validateOptionalPercentage(result, item && item.maxPositionPct, label, "maxPositionPct");
+  validateOptionalEnum(
+    result,
+    item && item.instrumentStructure,
+    VALID_INSTRUMENT_STRUCTURES,
+    label,
+    "instrumentStructure",
+    "invalidInstrumentStructure"
+  );
+  validateUnderlyingConfirmation(result, item && item.underlyingConfirmation, label, "underlyingConfirmation");
+  validateOptionalInteger(result, item && item.maxHoldingDays, label, "maxHoldingDays", { min: 1 });
+  validateOptionalString(result, item && item.riskNote, label, "riskNote");
+  validateOptionalEnum(result, item && item.etfCategory, VALID_ETF_CATEGORIES, label, "etfCategory", "invalidEtfCategory");
+  validateOptionalNumber(result, item && item.leverageFactor, label, "leverageFactor");
+  validateOptionalBoolean(result, item && item.inverse, label, "inverse");
+  validateOptionalBoolean(result, item && item.manualOverride, label, "manualOverride");
+
+  if (item && item.leverageFactor !== undefined && (!isFiniteNumber(item.leverageFactor) || item.leverageFactor <= 0)) {
+    pushError(
+      result,
+      "invalidNumber",
+      "leverageFactor debe ser un numero mayor a 0 si existe.",
+      `${label}.leverageFactor`
+    );
+  }
+
+  if (!isEtfAsset(item)) {
+    return;
+  }
+
+  if (
+    includeOperationalWarnings &&
+    item.status !== "descartar" &&
+    !hasValidUnderlyingConfirmation(item.underlyingConfirmation)
+  ) {
+    pushWarning(
+      result,
+      "missingUnderlyingConfirmation",
+      `${ticker || label} requiere underlyingConfirmation para tratarse como candidato tactico.`,
+      `${label}.underlyingConfirmation`,
+      { source, ticker }
+    );
+  }
+
+  if (!isLeveragedInverseEtf(item)) {
+    if (includeOperationalWarnings && needsManualEtfReview(item) && item.manualOverride !== true) {
+      pushWarning(
+        result,
+        "manualEtfReviewRequired",
+        `${ticker || label} debe quedar en vigilancia manual por su estructura ETF/ETN salvo override explicito.`,
+        `${label}.instrumentStructure`,
+        { source, ticker }
+      );
+    }
+    return;
+  }
+
+  validateRequiredString(result, item && item.holdingRule, label, "holdingRule");
+
+  if (!Number.isInteger(item && item.maxHoldingDays) || item.maxHoldingDays < 1) {
+    pushError(
+      result,
+      "requiredField",
+      "maxHoldingDays es obligatorio para ETFs apalancados o inversos.",
+      `${label}.maxHoldingDays`
+    );
+  }
+
+  validateRequiredString(result, item && item.riskNote, label, "riskNote");
+
+  if (includeOperationalWarnings && isFiniteNumber(item.maxPositionPct) && item.maxPositionPct > 10) {
+    pushWarning(
+      result,
+      "etfMaxPositionRecommendation",
+      `${ticker || label} supera la recomendacion de maxPositionPct <= 10 para ETFs apalancados o inversos.`,
+      `${label}.maxPositionPct`,
+      { source, ticker }
+    );
+  }
+
+  if (
+    includeOperationalWarnings &&
+    isFiniteNumber(item.maxPositionPct) &&
+    item.maxPositionPct > 5 &&
+    ((isFiniteNumber(item.leverageFactor) && item.leverageFactor >= 3) || item.inverse === true)
+  ) {
+    pushWarning(
+      result,
+      "etfConcentrationWarning",
+      `${ticker || label} supera 5% de posicion en un ETF con leverageFactor >= 3 o inverse=true.`,
+      `${label}.maxPositionPct`,
+      { source, ticker }
+    );
+  }
+
+  if (
+    includeOperationalWarnings &&
+    (!isNonEmptyString(item.instrumentStructure) || item.instrumentStructure !== "etf")
+  ) {
+    pushWarning(
+      result,
+      "strongManualReview",
+      `${ticker || label} es apalancado/inverso pero no tiene instrumentStructure="etf" confirmado. Requiere revision manual fuerte.`,
+      `${label}.instrumentStructure`,
+      { source, ticker }
+    );
+  }
+
+  if (includeOperationalWarnings && needsManualEtfReview(item) && item.manualOverride !== true) {
+    pushWarning(
+      result,
+      "manualEtfReviewRequired",
+      `${ticker || label} debe quedar en vigilancia manual por su estructura ETF/ETN salvo override explicito.`,
+      `${label}.instrumentStructure`,
+      { source, ticker }
+    );
+  }
+}
+
 function validateCatalystType(result, value, label, fieldName) {
   if (value === undefined) {
     return;
@@ -371,6 +599,10 @@ function validateOutlierFields(result, item, label) {
 }
 
 function warnIfMissingOutlierField(result, item, label, ticker, fieldName, source) {
+  if (isEtfAsset(item) && fieldName === "reratingPotential") {
+    return;
+  }
+
   if (item && item.status !== "descartar" && item[fieldName] === undefined) {
     pushWarning(
       result,
@@ -425,6 +657,11 @@ function validatePositions(data, options = {}) {
     validateCatalystType(result, position && position.catalystType, label, "catalystType");
     validatePlaybookType(result, position && position.playbookType, label, "playbookType");
     validateOutlierFields(result, position, label);
+    validateEtfFields(result, position, label, {
+      includeOperationalWarnings,
+      source: "position",
+      ticker
+    });
 
     if (ticker) {
       if (seenTickers.has(ticker)) {
@@ -581,6 +818,11 @@ function validateWatchlist(data, options = {}) {
     validateCatalystType(result, item && item.catalystType, label, "catalystType");
     validatePlaybookType(result, item && item.playbookType, label, "playbookType");
     validateOutlierFields(result, item, label);
+    validateEtfFields(result, item, label, {
+      includeOperationalWarnings,
+      source: "watchlist",
+      ticker
+    });
 
     if (ticker) {
       if (seenTickers.has(ticker)) {
@@ -933,7 +1175,9 @@ function validateStateConsistency(state) {
   const result = createValidationResult();
   const positions = (state.positions && state.positions.positions) || [];
   const watchlist = (state.watchlist && state.watchlist.watchlist) || [];
+  const outcomes = (state.outcomes && state.outcomes.outcomes) || [];
   const positionsByTicker = new Map();
+  const resolvedOutcomeTickers = new Map();
 
   positions.forEach((position, index) => {
     const ticker = normalizeTicker(position.ticker);
@@ -944,6 +1188,18 @@ function validateStateConsistency(state) {
         position
       });
     }
+  });
+
+  outcomes.forEach((outcome) => {
+    const ticker = normalizeTicker(outcome && outcome.ticker);
+
+    if (!ticker || outcome.outcomeLabel === "abierto") {
+      return;
+    }
+
+    const existing = resolvedOutcomeTickers.get(ticker) || [];
+    existing.push(outcome);
+    resolvedOutcomeTickers.set(ticker, existing);
   });
 
   watchlist.forEach((item, index) => {
@@ -974,6 +1230,24 @@ function validateStateConsistency(state) {
         );
       }
     }
+  });
+
+  positionsByTicker.forEach((entry, ticker) => {
+    if (!resolvedOutcomeTickers.has(ticker)) {
+      return;
+    }
+
+    const latestResolved = [...resolvedOutcomeTickers.get(ticker)].sort((left, right) =>
+      (right.resolvedAt || right.loggedAt || "").localeCompare(left.resolvedAt || left.loggedAt || "")
+    )[0];
+
+    pushWarning(
+      result,
+      "positionOutcomeOverlap",
+      `${ticker} aparece como posicion abierta y tambien tiene un outcome resuelto (${latestResolved.resolvedAt || latestResolved.loggedAt || "fecha n/d"}). Debe quedar explicitado si es una campana distinta.`,
+      `positions[${entry.index}]`,
+      { source: "position", ticker }
+    );
   });
 
   return result;
@@ -1257,11 +1531,14 @@ module.exports = {
   compareDateOnlyStrings,
   createValidationResult,
   formatIssue,
+  hasValidUnderlyingConfirmation,
   isFiniteNumber,
+  isEtfAsset,
   isNonEmptyString,
   isValidDateOnlyString,
   isValidTimestampString,
   mergeValidationResults,
+  normalizeTextEnum,
   normalizeTicker,
   parseDateOnlyToUtc,
   validateCatalystFeed,

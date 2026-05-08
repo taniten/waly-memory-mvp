@@ -59,7 +59,7 @@ function loadState() {
     validatePositions(positions, { currentDate }),
     validateWatchlist(watchlist, { currentDate }),
     validateLog(dailyLog, settings.maxNewOpportunities || 3, { currentDate }),
-    validateStateConsistency({ positions, watchlist })
+    validateStateConsistency({ outcomes, positions, watchlist })
   );
 
   assertValid(validation);

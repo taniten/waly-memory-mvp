@@ -24,19 +24,27 @@ function compareRankedItems(left, right) {
 
 function buildScoreBreakdown(item) {
   const factors = item.outlierFactors;
+  const etfProfile = item.etfProfile || {};
+  const reratingWeight = etfProfile.isEtfAsset ? 1 : 3;
+  const underlyingConfirmationBonus =
+    etfProfile.isEtfAsset && etfProfile.hasUnderlyingConfirmation ? 6 : 0;
   const hardDataScore =
     factors.catalystStrength * 3 +
     factors.catalystWindow * 2 +
     factors.liquidityQuality * 3 +
     factors.momentumQuality * 2 +
     factors.breakoutReadiness * 2 +
-    factors.reratingPotential * 3 +
+    factors.reratingPotential * reratingWeight +
     factors.insiderSupport * 1 +
-    factors.downsideClarity * 3;
+    factors.downsideClarity * 3 +
+    underlyingConfirmationBonus;
   const discoveryBonus = Math.min(factors.socialDiscoveryScore, 3) * 1.5;
   const crowdingPenalty = factors.crowdingRisk * 3;
   const extensionRisk = factors.momentumQuality >= 4 && factors.breakoutReadiness <= 2;
   const penalties = {
+    etfManualReview: etfProfile.requiresManualReview ? 18 : 0,
+    etfMissingUnderlyingConfirmation:
+      etfProfile.isEtfAsset && !etfProfile.hasUnderlyingConfirmation ? 14 : 0,
     extension: extensionRisk ? 6 : 0,
     hypeWithoutData: item.social.isHypey && !item.hasVerifiedCatalyst ? 8 : 0,
     noVerifiedCatalyst: item.hasVerifiedCatalyst ? 0 : 10,
@@ -100,6 +108,22 @@ function meetsBCriteria(item) {
 }
 
 function deriveSetupRank(item, breakdown) {
+  if (item.etfProfile && item.etfProfile.requiresManualReview) {
+    return VALID_SETUP_RANKS[3];
+  }
+
+  if (item.etfProfile && item.etfProfile.isEtfAsset && !item.etfProfile.hasUnderlyingConfirmation) {
+    return VALID_SETUP_RANKS[3];
+  }
+
+  if (item.etfProfile && item.etfProfile.isLeveragedInverse) {
+    if (meetsBCriteria(item) && breakdown.rawScore >= 38) {
+      return VALID_SETUP_RANKS[2];
+    }
+
+    return VALID_SETUP_RANKS[3];
+  }
+
   if (meetsAPlusCriteria(item, breakdown) && breakdown.rawScore >= 62) {
     return VALID_SETUP_RANKS[0];
   }
@@ -116,6 +140,18 @@ function deriveSetupRank(item, breakdown) {
 }
 
 function deriveOutlierVerdict(item, setupRank) {
+  if (item.etfProfile && item.etfProfile.requiresManualReview) {
+    return "Instrumento ETF/ETN de vigilancia manual. No promover sin override explicito.";
+  }
+
+  if (item.etfProfile && item.etfProfile.isEtfAsset && !item.etfProfile.hasUnderlyingConfirmation) {
+    return "ETF sin underlyingConfirmation suficiente. No califica como candidato tactico todavia.";
+  }
+
+  if (item.etfProfile && item.etfProfile.isLeveragedInverse) {
+    return "ETF apalancado o inverso: solo tactico, nunca tesis outlier ni A+ WALY.";
+  }
+
   if (setupRank === "A+") {
     return "Asimetria real con datos que respaldan un posible outlier.";
   }
@@ -132,6 +168,13 @@ function deriveOutlierVerdict(item, setupRank) {
 }
 
 function isOutlierCandidate(item) {
+  if (
+    item.etfProfile &&
+    (item.etfProfile.isLeveragedInverse || item.etfProfile.requiresManualReview)
+  ) {
+    return false;
+  }
+
   return (
     (item.setupRank === "A+" || item.setupRank === "A") &&
     item.outlierFactors.reratingPotential >= 4 &&

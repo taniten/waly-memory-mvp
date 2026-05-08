@@ -11,8 +11,11 @@ const {
   SOURCE_PRIORITY
 } = require("./constants");
 const {
+  hasValidUnderlyingConfirmation,
+  isEtfAsset,
   isFiniteNumber,
   isNonEmptyString,
+  normalizeTextEnum,
   isValidDateOnlyString,
   normalizeTicker,
   parseDateOnlyToUtc
@@ -385,6 +388,10 @@ function deriveCatalystWindowScore(daysToCatalyst) {
 }
 
 function deriveSetupType(item) {
+  if (item.etfProfile && item.etfProfile.isEtfAsset) {
+    return item.etfProfile.isLeveragedInverse ? "etf-tactical" : "etf-directional";
+  }
+
   if (isNonEmptyString(item.setupType)) {
     return item.setupType;
   }
@@ -406,6 +413,76 @@ function deriveSetupType(item) {
   }
 
   return "event-driven";
+}
+
+function buildUnderlyingConfirmation(underlyingConfirmation) {
+  if (!underlyingConfirmation || typeof underlyingConfirmation !== "object" || Array.isArray(underlyingConfirmation)) {
+    return {
+      benchmark: "",
+      invalidatesIf: "",
+      isValid: false,
+      macroCatalyst: "",
+      present: false,
+      trendConfirmed: null
+    };
+  }
+
+  return {
+    benchmark: underlyingConfirmation.benchmark || "",
+    invalidatesIf: underlyingConfirmation.invalidatesIf || "",
+    isValid: hasValidUnderlyingConfirmation(underlyingConfirmation),
+    macroCatalyst: underlyingConfirmation.macroCatalyst || "",
+    present: true,
+    trendConfirmed:
+      typeof underlyingConfirmation.trendConfirmed === "boolean"
+        ? underlyingConfirmation.trendConfirmed
+        : null
+  };
+}
+
+function buildEtfProfile(item) {
+  const category = normalizeTextEnum(item && item.etfCategory) || "plain";
+  const structure = normalizeTextEnum(item && item.instrumentStructure) || "unknown";
+  const leverageFactor = isFiniteNumber(item && item.leverageFactor) ? item.leverageFactor : null;
+  const inferredInverse =
+    item && item.inverse === true ? true : category === "inverse" || category === "leveraged-inverse";
+  const isLeveragedInverse =
+    isEtfAsset(item) &&
+    (
+      category === "leveraged" ||
+      category === "inverse" ||
+      category === "leveraged-inverse" ||
+      inferredInverse ||
+      (isFiniteNumber(leverageFactor) && leverageFactor > 1)
+    );
+  const underlyingConfirmation = buildUnderlyingConfirmation(item && item.underlyingConfirmation);
+  const manualOverride = item && item.manualOverride === true;
+  const requiresManualReview =
+    isEtfAsset(item) &&
+    !manualOverride &&
+    (
+      category === "volatility" ||
+      category === "single-stock-leveraged" ||
+      structure === "etn" ||
+      structure === "unknown"
+    );
+
+  return {
+    category,
+    hasUnderlyingConfirmation: underlyingConfirmation.isValid && underlyingConfirmation.trendConfirmed === true,
+    holdingRule: item && item.holdingRule ? item.holdingRule : null,
+    instrumentStructure: structure,
+    inverse: inferredInverse,
+    isEtfAsset: isEtfAsset(item),
+    isLeveragedInverse,
+    leverageFactor,
+    manualOverride,
+    maxHoldingDays: Number.isInteger(item && item.maxHoldingDays) ? item.maxHoldingDays : null,
+    maxPositionPct: isFiniteNumber(item && item.maxPositionPct) ? item.maxPositionPct : null,
+    requiresManualReview,
+    riskNote: item && item.riskNote ? item.riskNote : "",
+    underlyingConfirmation
+  };
 }
 
 function aggregateSocialSignals(signals, manualSocialDiscoveryScore, manualCrowdingRisk) {
@@ -440,13 +517,17 @@ function aggregateSocialSignals(signals, manualSocialDiscoveryScore, manualCrowd
 }
 
 function deriveOutlierFactors(item, ingestedMatch, socialAggregate, daysToCatalyst) {
+  const etfProfile = item.etfProfile || buildEtfProfile(item);
   const catalystStrength =
     clampScore(item.catalystStrength) ||
     clampScore((BASE_CATALYST_STRENGTH[item.catalystType] || 1) + (ingestedMatch ? 0.5 : 0));
   const liquidityQuality = clampScore(item.liquidityQuality) || 2;
   const momentumQuality = clampScore(item.momentumQuality) || 1;
   const breakoutReadiness = clampScore(item.breakoutReadiness) || 1;
-  const reratingPotential = clampScore(item.reratingPotential) || 1;
+  const baseReratingPotential = clampScore(item.reratingPotential) || 1;
+  const reratingPotential = etfProfile.isEtfAsset
+    ? Math.min(baseReratingPotential, etfProfile.isLeveragedInverse ? 1 : 2)
+    : baseReratingPotential;
   const insiderSupport =
     clampScore(item.insiderSupport) ||
     clampScore(item.catalystType === "insider" || (ingestedMatch && ingestedMatch.catalystType === "insider") ? 3 : 1);
@@ -472,9 +553,11 @@ function toEventRecord(item, sourceKind, currentDate) {
   const hasValidCatalystDate = isNonEmptyString(catalystDate) && isValidDateOnlyString(catalystDate);
   const daysToCatalyst = hasValidCatalystDate ? daysBetween(currentDate, catalystDate) : null;
   const priority = getPriorityValue(item, sourceKind);
+  const etfProfile = buildEtfProfile(item);
 
   return {
     avgPrice: isFiniteNumber(item.avgPrice) ? item.avgPrice : null,
+    assetType: item.assetType || null,
     catalyst: item.catalyst || item.rationale || "",
     catalystDate: hasValidCatalystDate ? catalystDate : null,
     catalystLabel: CATALYST_LABELS[item.catalystType] || "catalyst",
@@ -495,6 +578,7 @@ function toEventRecord(item, sourceKind, currentDate) {
     sourceKind,
     sourcePriority: SOURCE_PRIORITY[sourceKind] || 99,
     status: item.status,
+    etfProfile,
     thesis: item.thesis,
     ticker
   };
@@ -521,7 +605,15 @@ function createEnrichedEventRecord(item, sourceKind, currentDate, ingestedRecord
     mergedItem.socialDiscoveryScore,
     mergedItem.crowdingRisk
   );
-  const outlierFactors = deriveOutlierFactors(mergedItem, ingestedMatch, social, record.daysToCatalyst);
+  const outlierFactors = deriveOutlierFactors(
+    {
+      ...mergedItem,
+      etfProfile: record.etfProfile
+    },
+    ingestedMatch,
+    social,
+    record.daysToCatalyst
+  );
   const hasVerifiedCatalyst =
     Boolean(record.catalystType && record.catalystDate && record.source) && mismatches.length === 0;
   const manualSocialSignals = Array.isArray(mergedItem.socialSignals) ? mergedItem.socialSignals : [];
@@ -543,7 +635,10 @@ function createEnrichedEventRecord(item, sourceKind, currentDate, ingestedRecord
       records: ingestedRecords
     },
     outlierFactors,
-    setupType: deriveSetupType(mergedItem),
+    setupType: deriveSetupType({
+      ...mergedItem,
+      etfProfile: record.etfProfile
+    }),
     social: {
       ...social,
       manualSocialSignals,
@@ -612,6 +707,41 @@ function createCoverageFlags(record) {
         record.ticker
       )
     );
+  }
+
+  if (record.etfProfile && record.etfProfile.isEtfAsset) {
+    if (!record.etfProfile.hasUnderlyingConfirmation) {
+      flags.push(
+        createCoverageFlag(
+          "missingUnderlyingConfirmation",
+          `${record.ticker} requiere underlyingConfirmation para tratarse como ETF tactico.`,
+          record.sourceKind,
+          record.ticker
+        )
+      );
+    }
+
+    if (record.etfProfile.isLeveragedInverse && record.etfProfile.instrumentStructure !== "etf") {
+      flags.push(
+        createCoverageFlag(
+          "strongManualReview",
+          `${record.ticker} es ETF apalancado/inverso sin instrumentStructure="etf" confirmado. Requiere revision manual fuerte.`,
+          record.sourceKind,
+          record.ticker
+        )
+      );
+    }
+
+    if (record.etfProfile.requiresManualReview) {
+      flags.push(
+        createCoverageFlag(
+          "manualEtfReviewRequired",
+          `${record.ticker} queda en vigilancia manual por su estructura ETF/ETN salvo override explicito.`,
+          record.sourceKind,
+          record.ticker
+        )
+      );
+    }
   }
 
   return flags;

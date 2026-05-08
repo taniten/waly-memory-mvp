@@ -60,6 +60,35 @@ const VALID_OUTCOME_SOURCE_KINDS = [
   "opportunity"
 ];
 
+const VALID_HOLDING_RULES = [
+  "intraday-only",
+  "1-3d tactical",
+  "swing-short",
+  "hedge-temporal"
+];
+
+const VALID_INSTRUMENT_STRUCTURES = [
+  "etf",
+  "etn",
+  "etc",
+  "unknown"
+];
+
+const VALID_ETF_CATEGORIES = [
+  "plain",
+  "sector",
+  "thematic",
+  "bond",
+  "commodity",
+  "volatility",
+  "single-stock",
+  "single-stock-leveraged",
+  "leveraged",
+  "inverse",
+  "leveraged-inverse",
+  "other"
+];
+
 const STATUS_STRENGTH = Object.freeze({
   descartar: 0,
   "nueva oportunidad": 1,
@@ -123,6 +152,9 @@ module.exports = {
   SOURCE_PRIORITY,
   STATUS_STRENGTH,
   VALID_CATALYST_TYPES,
+  VALID_ETF_CATEGORIES,
+  VALID_HOLDING_RULES,
+  VALID_INSTRUMENT_STRUCTURES,
   VALID_OUTCOME_LABELS,
   VALID_OUTCOME_SOURCE_KINDS,
   VALID_PLAYBOOK_TYPES,

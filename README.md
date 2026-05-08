@@ -18,6 +18,9 @@ WALY puede convivir con dos juegos distintos sin confundirlos:
 
 La regla es simple: no mezclar ambos loops. Si un setup no es `A+`, igual puede servir como `event-swing`, pero debe medirse como tal.
 
+Advertencia ETFs:
+`Los ETFs apalancados/inversos pueden resetear diariamente y no estan disenados como buy-and-hold. WALY los trata como instrumentos tacticos, no como tesis de inversion.`
+
 ## Que busca WALY
 
 No intenta rankear “buenas ideas” en general. Busca pocas configuraciones con potencial de outlier real, idealmente con asimetria suficiente como para justificar una tesis x2+ si el catalyst y la estructura se alinean.
@@ -201,6 +204,13 @@ Reglas del ranking:
 - `A+` queda reservado para setups con verdadera asimetria
 - si no hay edge real, WALY devuelve `0`
 
+Reglas extra para ETFs:
+
+- Si `assetType="etf"`, `reratingPotential` deja de ser factor principal y WALY exige `underlyingConfirmation` para tratarlo como candidato tactico.
+- ETFs apalancados o inversos nunca pueden ser `A+` WALY ni `outlier candidate`.
+- ETFs de volatilidad, `single-stock leveraged ETFs`, `ETNs` o estructura `unknown` quedan en vigilancia manual salvo `manualOverride` explicito.
+- Si un ETF apalancado/inverso no confirma `instrumentStructure="etf"`, WALY genera warning fuerte de revision manual.
+
 ## Esquema de datos
 
 ### `data/positions.json`
@@ -221,6 +231,17 @@ Cada posicion puede incluir:
 - `catalystDate`
 - `invalidation`
 - `source`
+- `assetType`
+- `etfCategory`
+- `holdingRule`
+- `maxHoldingDays`
+- `maxPositionPct`
+- `riskNote`
+- `leverageFactor`
+- `inverse`
+- `instrumentStructure`
+- `underlyingConfirmation`
+- `manualOverride`
 - `catalystStrength`
 - `liquidityQuality`
 - `momentumQuality`
@@ -241,6 +262,16 @@ Cada ticker puede incluir el mismo set conceptual que posiciones, mas:
 - `rationale`
 - `catalystWindow`
 - `nextReviewAt`
+
+Campos ETF adicionales:
+
+- `holdingRule`: `intraday-only` | `1-3d tactical` | `swing-short` | `hedge-temporal`
+- `maxPositionPct`: numero opcional
+- `instrumentStructure`: `etf` | `etn` | `etc` | `unknown`
+- `underlyingConfirmation`: objeto opcional con `benchmark`, `trendConfirmed`, `macroCatalyst`, `invalidatesIf`
+- `etfCategory`: por ejemplo `leveraged`, `inverse`, `leveraged-inverse`, `volatility`, `single-stock-leveraged`
+- `maxHoldingDays`, `riskNote`, `leverageFactor`, `inverse`
+- `manualOverride`: permite levantar vigilancia manual solo de forma explicita
 
 ### `data/social_signals.json`
 
