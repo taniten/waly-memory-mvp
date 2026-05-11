@@ -1,25 +1,23 @@
 {
   "signals": [
     {
-      "ticker": "VKTX",
-      "signalDate": "2026-04-16",
+      "ticker": "IPX",
+      "signalDate": "2026-04-08",
       "assetType": "equity",
-      "playbookType": "event-swing",
+      "playbookType": "outlier",
       "setupRankAtEntry": "A",
-      "catalystType": "fda",
-      "entryPrice": 24.85,
-      "sourceKind": "watchlist",
-      "notes": "Ejemplo de signal manual historica para validar infraestructura mock."
+      "sourceKind": "opportunity",
+      "notes": "Ejemplo para probar provider local-csv con archivo historico ficticio."
     },
     {
-      "ticker": "ACHV",
-      "signalDate": "2026-05-06",
+      "ticker": "AXSM",
+      "signalDate": "2026-04-08",
       "assetType": "equity",
       "playbookType": "event-swing",
       "setupRankAtEntry": "B",
       "catalystType": "earnings",
       "sourceKind": "opportunity",
-      "notes": "Radar tactico de biotech para probar metricas posteriores."
+      "notes": "Segundo ejemplo para medir retornos reales desde CSV local ficticio."
     },
     {
       "ticker": "SOXL",
@@ -29,16 +27,18 @@
       "setupRankAtEntry": "B",
       "catalystType": "unusual-volume-gap",
       "sourceKind": "watchlist",
-      "notes": "Ejemplo ETF para breakdown por assetType."
+      "notes": "Ejemplo ETF sin CSV local para validar registro de errores por ticker faltante."
     },
     {
-      "ticker": "IPX",
-      "signalDate": "2026-04-08",
+      "ticker": "VKTX",
+      "signalDate": "2026-04-16",
       "assetType": "equity",
-      "playbookType": "outlier",
+      "playbookType": "event-swing",
       "setupRankAtEntry": "A",
-      "sourceKind": "opportunity",
-      "notes": "Ejemplo sin entryPrice para verificar precio mock deterministico."
+      "catalystType": "fda",
+      "entryPrice": 24.85,
+      "sourceKind": "watchlist",
+      "notes": "Queda como ejemplo adicional fuera del dry-run de 3 señales."
     }
   ]
 }

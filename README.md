@@ -69,6 +69,8 @@ waly-memory-mvp/
     nueva-revision.json
   reports/
     .gitkeep
+  historical_prices/
+    .gitkeep
   src/
     cli.js
     compareState.js
@@ -456,20 +458,22 @@ node src/cli.js backtest --dry-run
 
 `node src/cli.js historical-backtest <config-json>` crea un modulo separado del Outcome Summary y trabaja sobre senales historicas manuales ex-ante. La idea es probar infraestructura de medicion, checkpoint/resume y metricas auditables sin tocar `data/` ni mezclar este flujo con outcomes ya cargados.
 
-Esta primera version:
+La capa actual soporta dos providers:
 
 - usa un archivo manual de senales historicas
 - escribe solo dentro de `backtests/<runId>/`
 - guarda `signals.json`, `summary.json`, `summary.md` y `checkpoint.json`
-- usa `dataProvider="mock"` con trayectorias sinteticas deterministicas
-- no valida edge real todavia
+- `dataProvider="mock"` con trayectorias sinteticas deterministicas
+- `dataProvider="local-csv"` con precios historicos desde CSV locales
 
 Importante:
 
 - el provider `mock` no usa precios historicos reales y no sirve para validar ventaja estadistica
+- el provider `local-csv` si puede medir retornos reales si los CSV cargados contienen history historica real
 - si `allowNetwork=false`, WALY no hace requests externos
 - el objetivo actual es probar plumbing, audit trail, checkpoint/resume y calculo de metricas posteriores
-- el backtest real posterior va a necesitar history de precios real y un control mas estricto de look-ahead bias
+- WALY todavia no descarga esos CSV automaticamente
+- el backtest posterior igual requerira control cada vez mas estricto de look-ahead bias y calidad de datos
 
 Ejemplo rapido:
 
@@ -481,6 +485,34 @@ Archivos de ejemplo:
 
 - `examples/historical-backtest-config.example.json`
 - `examples/historical-signals.example.json`
+- `examples/historical-prices/IPX.example.csv`
+- `examples/historical-prices/AXSM.example.csv`
+
+## Historical Price Provider `local-csv`
+
+Si queres medir retornos historicos con precios locales, prepara archivos en:
+
+```text
+historical_prices/TICKER.csv
+```
+
+Columnas requeridas:
+
+- `date`
+- `open`
+- `high`
+- `low`
+- `close`
+- `volume`
+
+Reglas de uso:
+
+- WALY ordena el CSV por `date` ascendente
+- si no existe fila exacta para `signalDate`, usa el primer `close` disponible posterior
+- los horizontes `5/10/20/30d` usan ruedas de trading disponibles, no calendario
+- los CSV viven solo localmente y `historical_prices/*.csv` queda ignorado por Git
+- esto si permite medir retornos reales si el contenido del CSV es historico real
+- WALY todavia no descarga history automaticamente ni usa APIs en esta fase
 
 ## Sync de universo
 

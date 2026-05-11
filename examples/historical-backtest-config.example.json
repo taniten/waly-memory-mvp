@@ -1,5 +1,5 @@
 {
-  "runId": "demo-historical-backtest-mock",
+  "runId": "demo-historical-backtest-local-csv",
   "dryRun": true,
   "maxSignals": 3,
   "checkpointEvery": 1,
@@ -8,6 +8,8 @@
   "signalsFile": "./historical-signals.example.json",
   "horizons": [5, 10, 20, 30],
   "hitTargetsPct": [7, 10, 15],
-  "dataProvider": "mock",
+  "dataProvider": "local-csv",
+  "historicalPricesDir": "historical_prices",
+  "priceFilePattern": "{ticker}.csv",
   "allowNetwork": false
 }

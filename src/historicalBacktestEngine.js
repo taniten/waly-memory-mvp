@@ -24,6 +24,7 @@ const DEFAULT_HORIZONS = FIXED_HORIZONS;
 const DEFAULT_HIT_TARGETS = FIXED_HIT_TARGETS;
 const DEFAULT_CHECKPOINT_EVERY = 25;
 const FAILED_FAST_THRESHOLD_PCT = -7;
+const REQUIRED_PRICE_COLUMNS = ["date", "open", "high", "low", "close", "volume"];
 
 function readJsonFile(filePath) {
   try {
@@ -97,6 +98,22 @@ function resolveSignalsPath(signalsFile, configPath) {
 
   if (!found) {
     throw new Error(`No existe signalsFile: ${signalsFile}.`);
+  }
+
+  return found;
+}
+
+function resolveHistoricalPricesDir(historicalPricesDir, configPath) {
+  const candidatePaths = [
+    path.resolve(path.dirname(configPath), historicalPricesDir),
+    path.resolve(process.cwd(), historicalPricesDir)
+  ];
+  const found = candidatePaths.find(
+    (candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()
+  );
+
+  if (!found) {
+    throw new Error(`No existe historicalPricesDir: ${historicalPricesDir}.`);
   }
 
   return found;
@@ -183,6 +200,10 @@ function roundPrice(value) {
 
 function roundPercent(value) {
   return Number(value.toFixed(1));
+}
+
+function parseCsvLine(line) {
+  return line.split(",").map((value) => value.trim());
 }
 
 function validateHistoricalSignal(signal, index) {
@@ -320,9 +341,35 @@ function validateConfig(config) {
 
   if (
     !isNonEmptyString(config.dataProvider) ||
-    !["mock", "local"].includes(normalizeTextEnum(config.dataProvider))
+    !["mock", "local-csv"].includes(normalizeTextEnum(config.dataProvider))
   ) {
-    errors.push("dataProvider debe ser mock o local.");
+    errors.push("dataProvider debe ser mock o local-csv.");
+  }
+
+  if (
+    config.historicalPricesDir !== undefined &&
+    !isNonEmptyString(config.historicalPricesDir)
+  ) {
+    errors.push("historicalPricesDir debe ser string no vacio si existe.");
+  }
+
+  if (
+    config.priceFilePattern !== undefined &&
+    !isNonEmptyString(config.priceFilePattern)
+  ) {
+    errors.push("priceFilePattern debe ser string no vacio si existe.");
+  }
+
+  if (normalizeTextEnum(config.dataProvider) === "local-csv") {
+    if (!isNonEmptyString(config.historicalPricesDir)) {
+      errors.push("dataProvider=local-csv requiere historicalPricesDir.");
+    }
+
+    if (!isNonEmptyString(config.priceFilePattern)) {
+      errors.push("dataProvider=local-csv requiere priceFilePattern.");
+    } else if (!config.priceFilePattern.includes("{ticker}")) {
+      errors.push("priceFilePattern debe incluir {ticker} para dataProvider=local-csv.");
+    }
   }
 
   if (typeof config.allowNetwork !== "boolean") {
@@ -341,21 +388,28 @@ function validateConfig(config) {
 function normalizeConfig(config, configPath) {
   const outputRoot = resolveOutputRoot(config.outputDir || BACKTESTS_DIR);
   const signalsPath = resolveSignalsPath(config.signalsFile, configPath);
+  const dataProvider = normalizeTextEnum(config.dataProvider);
 
   return {
     allowNetwork: false,
     checkpointEvery: config.checkpointEvery || DEFAULT_CHECKPOINT_EVERY,
     configPath,
-    dataProvider: normalizeTextEnum(config.dataProvider),
+    dataProvider,
     dryRun: config.dryRun === true,
     hitTargetsPct: Array.from(new Set(config.hitTargetsPct || DEFAULT_HIT_TARGETS)).sort((left, right) => left - right),
+    historicalPricesDir:
+      dataProvider === "local-csv"
+        ? resolveHistoricalPricesDir(config.historicalPricesDir, configPath)
+        : null,
     horizons: Array.from(new Set(config.horizons || DEFAULT_HORIZONS)).sort((left, right) => left - right),
     maxSignals: config.maxSignals,
     outputRoot,
+    priceFilePattern: isNonEmptyString(config.priceFilePattern) ? config.priceFilePattern : null,
     resumeFromCheckpoint: config.resumeFromCheckpoint === true,
     runId: config.runId,
     signalsFile: config.signalsFile,
-    signalsPath
+    signalsPath,
+    tickerPriceCache: new Map()
   };
 }
 
@@ -383,6 +437,91 @@ function buildRunPaths(normalizedConfig) {
     summaryJsonPath: path.join(runDir, "summary.json"),
     summaryMarkdownPath: path.join(runDir, "summary.md")
   };
+}
+
+function validatePriceColumns(headers, filePath) {
+  const normalizedHeaders = headers.map((header) => normalizeTextEnum(header));
+
+  REQUIRED_PRICE_COLUMNS.forEach((column) => {
+    if (!normalizedHeaders.includes(column)) {
+      throw new Error(`Falta columna ${column} en ${filePath}.`);
+    }
+  });
+
+  return normalizedHeaders;
+}
+
+function loadLocalCsvRows(filePath) {
+  let raw;
+
+  try {
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      throw new Error(`No existe CSV historico: ${filePath}.`);
+    }
+
+    throw error;
+  }
+
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    throw new Error(`CSV historico vacio o incompleto: ${filePath}.`);
+  }
+
+  const headers = validatePriceColumns(parseCsvLine(lines[0]), filePath);
+  const rows = lines.slice(1).map((line, index) => {
+    const values = parseCsvLine(line);
+
+    if (values.length !== headers.length) {
+      throw new Error(`Fila CSV invalida en ${filePath} linea ${index + 2}.`);
+    }
+
+    const row = Object.fromEntries(headers.map((header, valueIndex) => [header, values[valueIndex]]));
+    const numericFields = ["open", "high", "low", "close", "volume"];
+    const parsed = {
+      close: Number(row.close),
+      date: row.date,
+      high: Number(row.high),
+      low: Number(row.low),
+      open: Number(row.open),
+      volume: Number(row.volume)
+    };
+
+    if (!isValidDateOnlyString(parsed.date)) {
+      throw new Error(`Fecha invalida en ${filePath} linea ${index + 2}: ${row.date}.`);
+    }
+
+    numericFields.forEach((field) => {
+      if (!isFiniteNumber(parsed[field])) {
+        throw new Error(`Numero invalido en ${filePath} linea ${index + 2} campo ${field}.`);
+      }
+    });
+
+    return parsed;
+  });
+
+  return rows.sort((left, right) => left.date.localeCompare(right.date));
+}
+
+function resolvePriceFilePath(signal, normalizedConfig) {
+  const relativeFile = normalizedConfig.priceFilePattern.replaceAll("{ticker}", signal.ticker);
+  return path.join(normalizedConfig.historicalPricesDir, relativeFile);
+}
+
+function getLocalCsvRows(signal, normalizedConfig) {
+  if (normalizedConfig.tickerPriceCache.has(signal.ticker)) {
+    return normalizedConfig.tickerPriceCache.get(signal.ticker);
+  }
+
+  const filePath = resolvePriceFilePath(signal, normalizedConfig);
+  const rows = loadLocalCsvRows(filePath);
+  normalizedConfig.tickerPriceCache.set(signal.ticker, rows);
+  return rows;
 }
 
 function buildMockSeries(signal, maxHorizon) {
@@ -425,6 +564,31 @@ function getCloseForDay(series, day) {
   return series.find((item) => item.day === day) || null;
 }
 
+function buildLocalCsvSeries(signal, normalizedConfig) {
+  const rows = getLocalCsvRows(signal, normalizedConfig);
+  const entryIndex = rows.findIndex((row) => row.date >= signal.signalDate);
+
+  if (entryIndex === -1) {
+    throw new Error(`No hay precio disponible en o despues de ${signal.signalDate} para ${signal.ticker}.`);
+  }
+
+  const entryRow = rows[entryIndex];
+  const maxHorizon = Math.max(...normalizedConfig.horizons, ...FIXED_HORIZONS);
+  const windowRows = rows.slice(entryIndex + 1, entryIndex + maxHorizon + 1);
+  const closes = windowRows.map((row, index) => ({
+    close: row.close,
+    day: index + 1,
+    returnPct: roundPercent(((row.close - entryRow.close) / entryRow.close) * 100)
+  }));
+
+  return {
+    closes,
+    entryDate: entryRow.date,
+    entryPrice: roundPrice(entryRow.close),
+    priceSource: resolvePriceFilePath(signal, normalizedConfig)
+  };
+}
+
 function computeSignalMetrics(signal, priceSeries, config) {
   const allReturns = priceSeries.closes.map((item) => item.returnPct);
   const peakReturnPct = allReturns.length ? Math.max(...allReturns) : null;
@@ -452,6 +616,7 @@ function computeSignalMetrics(signal, priceSeries, config) {
     assetType: signal.assetType,
     catalystType: signal.catalystType || null,
     daysToPeak,
+    entryDate: priceSeries.entryDate || signal.signalDate,
     entryPrice: priceSeries.entryPrice,
     failedFast: isFiniteNumber(earlyMinReturn) ? earlyMinReturn <= FAILED_FAST_THRESHOLD_PCT : null,
     falsePositive: isFiniteNumber(peakReturnPct) && peakReturnPct >= 7 && isFiniteNumber(finalReturn)
@@ -536,6 +701,18 @@ function buildBreakdown(items, selector, fallback) {
 }
 
 function buildSummary(normalizedConfig, processedSignals, errors) {
+  const notes = normalizedConfig.dataProvider === "local-csv"
+    ? [
+        "Este Historical Signal Backtest usa provider local-csv sobre archivos locales.",
+        "Si los CSV contienen precios historicos reales, las metricas representan retornos reales medidos ex-post.",
+        "WALY no descarga estos CSV automaticamente; la preparacion de historical_prices sigue siendo manual."
+      ]
+    : [
+        "Este Historical Signal Backtest MVP usa provider mock deterministico.",
+        "No valida edge real hasta conectarlo con history de precios reales.",
+        "Las metricas se calculan solo con trayectoria posterior a signalDate para evitar look-ahead bias en la medicion."
+      ];
+
   return {
     allowNetwork: normalizedConfig.allowNetwork,
     avgMaxDrawdown: average(processedSignals.map((item) => item.maxDrawdownPct).filter(isFiniteNumber)),
@@ -570,11 +747,7 @@ function buildSummary(normalizedConfig, processedSignals, errors) {
     horizons: normalizedConfig.horizons,
     maxSignals: normalizedConfig.maxSignals || null,
     medianDaysToPeak: median(processedSignals.map((item) => item.daysToPeak).filter(isFiniteNumber)),
-    notes: [
-      "Este Historical Signal Backtest MVP usa provider mock deterministico.",
-      "No valida edge real hasta conectarlo con history de precios reales.",
-      "Las metricas se calculan solo con trayectoria posterior a signalDate para evitar look-ahead bias en la medicion."
-    ],
+    notes,
     runId: normalizedConfig.runId,
     signalsFile: normalizedConfig.signalsFile,
     totalSignals: normalizedConfig.totalSignals,
@@ -602,10 +775,14 @@ function renderBreakdownTable(items) {
 }
 
 function renderSummaryMarkdown(summary, errors) {
+  const intro = summary.dataProvider === "local-csv"
+    ? "_Backtest ex-ante usando CSV locales. Si los archivos contienen history real, las metricas si reflejan retornos medidos con precios reales._"
+    : "_Infraestructura ex-ante con provider mock deterministico. No valida edge real._";
+
   return [
     `# Historical Signal Backtest MVP - ${summary.runId}`,
     "",
-    "_Infraestructura ex-ante con provider mock deterministico. No valida edge real._",
+    intro,
     "",
     "## Run",
     `- runId: \`${summary.runId}\``,
@@ -738,8 +915,15 @@ function processSignal(signal, normalizedConfig) {
     throw new Error("allowNetwork=true no esta permitido en este MVP.");
   }
 
-  if (normalizedConfig.dataProvider === "local") {
-    throw new Error("dataProvider=local todavia no esta implementado en Fase 2A.");
+  if (normalizedConfig.dataProvider === "local-csv") {
+    const priceSeries = buildLocalCsvSeries(signal, normalizedConfig);
+    const metrics = computeSignalMetrics(signal, priceSeries, normalizedConfig);
+
+    return {
+      ...metrics,
+      priceSource: priceSeries.priceSource,
+      provider: "local-csv"
+    };
   }
 
   if (normalizedConfig.dataProvider !== "mock") {
