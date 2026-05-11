@@ -26,6 +26,9 @@ backtests/**/summary.md
 historical_prices/*.csv
 historical_prices/**/*.csv
 !historical_prices/.gitkeep
+historical_signals/*.json
+historical_signals/**/*.json
+!historical_signals/.gitkeep
 waly-daily-report*.md
 waly-outlier-hunt-report*.md
 nueva-revision.json
