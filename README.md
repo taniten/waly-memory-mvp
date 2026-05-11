@@ -514,6 +514,22 @@ Reglas de uso:
 - esto si permite medir retornos reales si el contenido del CSV es historico real
 - WALY todavia no descarga history automaticamente ni usa APIs en esta fase
 
+## Entry price policy
+
+`historical-backtest` acepta `entryPricePolicy` para definir una regla explicita y auditable de entrada:
+
+- `next-open`: default. Usa el `open` del primer dia de trading posterior a `signalDate`.
+- `next-close`: usa el `close` del primer dia de trading posterior a `signalDate`.
+- `signal-close`: usa el `close` del primer dia disponible en o despues de `signalDate`.
+- `provided`: usa `entryPrice` cargado manualmente en la senal.
+
+Lectura operativa:
+
+- `next-open` es la opcion conservadora por defecto cuando la senal se registra despues del cierre o no conoces la ejecucion exacta.
+- `provided` conviene reservarlo para ejecuciones reales documentadas con `actualExecutionVerified: true`.
+- `signal-close` puede introducir sesgo si la senal realmente aparecio intraday y se la evalua como si hubieras entrado al cierre de ese mismo dia.
+- los retornos `5/10/20/30d`, el `peakReturnPct`, el `maxDrawdownPct` y `daysToPeak` se miden desde `entryDate`, no desde `signalDate`.
+
 ## Sync de universo
 
 `node src/cli.js sync-universe` corre una capa de discovery externa y deja todo local:

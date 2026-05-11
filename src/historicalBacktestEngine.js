@@ -25,6 +25,7 @@ const DEFAULT_HIT_TARGETS = FIXED_HIT_TARGETS;
 const DEFAULT_CHECKPOINT_EVERY = 25;
 const FAILED_FAST_THRESHOLD_PCT = -7;
 const REQUIRED_PRICE_COLUMNS = ["date", "open", "high", "low", "close", "volume"];
+const VALID_ENTRY_PRICE_POLICIES = ["provided", "signal-close", "next-open", "next-close"];
 
 function readJsonFile(filePath) {
   try {
@@ -206,6 +207,21 @@ function parseCsvLine(line) {
   return line.split(",").map((value) => value.trim());
 }
 
+function formatDateOnly(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getNextBusinessDate(dateString) {
+  const parts = dateString.split("-").map(Number);
+  const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+
+  do {
+    date.setUTCDate(date.getUTCDate() + 1);
+  } while (date.getUTCDay() === 0 || date.getUTCDay() === 6);
+
+  return formatDateOnly(date);
+}
+
 function validateHistoricalSignal(signal, index) {
   const issues = [];
   const label = `signals[${index}]`;
@@ -261,6 +277,20 @@ function validateHistoricalSignal(signal, index) {
 
   if (signal.notes !== undefined && !isNonEmptyString(signal.notes)) {
     issues.push(`${label}.notes debe ser string no vacio si existe.`);
+  }
+
+  if (
+    signal.actualExecutionVerified !== undefined &&
+    typeof signal.actualExecutionVerified !== "boolean"
+  ) {
+    issues.push(`${label}.actualExecutionVerified debe ser boolean si existe.`);
+  }
+
+  if (
+    signal.entryPriceNote !== undefined &&
+    !isNonEmptyString(signal.entryPriceNote)
+  ) {
+    issues.push(`${label}.entryPriceNote debe ser string no vacio si existe.`);
   }
 
   return issues;
@@ -347,6 +377,16 @@ function validateConfig(config) {
   }
 
   if (
+    config.entryPricePolicy !== undefined &&
+    (
+      !isNonEmptyString(config.entryPricePolicy) ||
+      !VALID_ENTRY_PRICE_POLICIES.includes(normalizeTextEnum(config.entryPricePolicy))
+    )
+  ) {
+    errors.push(`entryPricePolicy debe ser uno de ${VALID_ENTRY_PRICE_POLICIES.join(", ")}.`);
+  }
+
+  if (
     config.historicalPricesDir !== undefined &&
     !isNonEmptyString(config.historicalPricesDir)
   ) {
@@ -396,6 +436,7 @@ function normalizeConfig(config, configPath) {
     configPath,
     dataProvider,
     dryRun: config.dryRun === true,
+    entryPricePolicy: normalizeTextEnum(config.entryPricePolicy || "next-open"),
     hitTargetsPct: Array.from(new Set(config.hitTargetsPct || DEFAULT_HIT_TARGETS)).sort((left, right) => left - right),
     historicalPricesDir:
       dataProvider === "local-csv"
@@ -418,8 +459,13 @@ function loadSignals(signalsPath) {
   validateSignalsFile(data);
   return data.signals.map((signal) => ({
     ...signal,
+    actualExecutionVerified:
+      typeof signal.actualExecutionVerified === "boolean"
+        ? signal.actualExecutionVerified
+        : null,
     assetType: normalizeTextEnum(signal.assetType),
     catalystType: signal.catalystType ? normalizeTextEnum(signal.catalystType) : undefined,
+    entryPriceNote: signal.entryPriceNote || null,
     playbookType: normalizeTextEnum(signal.playbookType),
     setupRankAtEntry: signal.setupRankAtEntry,
     sourceKind: signal.sourceKind ? normalizeTextEnum(signal.sourceKind) : undefined,
@@ -527,14 +573,12 @@ function getLocalCsvRows(signal, normalizedConfig) {
 function buildMockSeries(signal, maxHorizon) {
   const seedKey = `${signal.ticker}|${signal.signalDate}|${signal.playbookType}|${signal.setupRankAtEntry}`;
   const seed = stableHash(seedKey);
-  const generatedEntryPrice = roundPrice(8 + ((seed % 9200) / 100));
-  const entryPrice = isFiniteNumber(signal.entryPrice) && signal.entryPrice > 0
-    ? roundPrice(signal.entryPrice)
-    : generatedEntryPrice;
-  const closes = [];
-  let price = entryPrice;
+  const basePrice = roundPrice(8 + ((seed % 9200) / 100));
+  const rows = [];
+  let closePrice = basePrice;
+  let tradingDate = signal.signalDate;
 
-  for (let day = 1; day <= maxHorizon; day += 1) {
+  for (let day = 0; day <= maxHorizon + 2; day += 1) {
     const daySeed = stableHash(`${seedKey}|${day}`);
     const drift = (((seed >>> 3) % 17) - 8) / 5000;
     const wave = Math.sin((day + (seed % 19)) * 0.85) * (0.004 + ((seed % 7) / 1000));
@@ -544,19 +588,29 @@ function buildMockSeries(signal, maxHorizon) {
     const shockDirection = seed % 2 === 0 ? 1 : -1;
     const shock = day === shockDay ? shockDirection * shockMagnitude : 0;
     const dailyReturn = clamp(drift + wave + noise + shock, -0.12, 0.12);
+    const open = day === 0
+      ? basePrice
+      : roundPrice(closePrice * (1 + ((((daySeed >>> 4) % 9) - 4) / 1000)));
+    const close = roundPrice(open * (1 + dailyReturn));
+    const high = roundPrice(Math.max(open, close) * (1 + ((daySeed % 5) / 1000)));
+    const low = roundPrice(Math.min(open, close) * (1 - (((daySeed >>> 6) % 5) / 1000)));
 
-    price = roundPrice(price * (1 + dailyReturn));
-    closes.push({
-      close: price,
-      day,
-      returnPct: roundPercent(((price - entryPrice) / entryPrice) * 100)
+    rows.push({
+      close,
+      date: tradingDate,
+      high,
+      low,
+      open,
+      volume: 1000000 + (daySeed % 500000)
     });
+
+    closePrice = close;
+    tradingDate = getNextBusinessDate(tradingDate);
   }
 
   return {
-    closes,
-    entryPrice,
-    mockSeed: seed
+    mockSeed: seed,
+    rows
   };
 }
 
@@ -564,47 +618,150 @@ function getCloseForDay(series, day) {
   return series.find((item) => item.day === day) || null;
 }
 
-function buildLocalCsvSeries(signal, normalizedConfig) {
-  const rows = getLocalCsvRows(signal, normalizedConfig);
-  const entryIndex = rows.findIndex((row) => row.date >= signal.signalDate);
+function resolveEntryFromRows(signal, rows, config) {
+  const policy = config.entryPricePolicy;
+  const signalDate = signal.signalDate;
+  const firstOnOrAfterIndex = rows.findIndex((row) => row.date >= signalDate);
+  const firstAfterIndex = rows.findIndex((row) => row.date > signalDate);
 
-  if (entryIndex === -1) {
-    throw new Error(`No hay precio disponible en o despues de ${signal.signalDate} para ${signal.ticker}.`);
+  if (policy === "provided") {
+    if (!isFiniteNumber(signal.entryPrice) || signal.entryPrice <= 0) {
+      throw new Error("entryPricePolicy=provided requiere entryPrice en la senal.");
+    }
+
+    if (firstOnOrAfterIndex === -1) {
+      throw new Error(`No hay precio disponible en o despues de ${signalDate} para ${signal.ticker}.`);
+    }
+
+    return {
+      entryDate: rows[firstOnOrAfterIndex].date,
+      entryIndex: firstOnOrAfterIndex,
+      entryPrice: roundPrice(signal.entryPrice),
+      entryPriceSource: "provided",
+      entryPriceWarning:
+        signal.actualExecutionVerified === true
+          ? null
+          : "provided entryPrice sin ejecucion real verificada"
+    };
   }
 
-  const entryRow = rows[entryIndex];
-  const maxHorizon = Math.max(...normalizedConfig.horizons, ...FIXED_HORIZONS);
-  const windowRows = rows.slice(entryIndex + 1, entryIndex + maxHorizon + 1);
-  const closes = windowRows.map((row, index) => ({
-    close: row.close,
-    day: index + 1,
-    returnPct: roundPercent(((row.close - entryRow.close) / entryRow.close) * 100)
-  }));
+  if (policy === "signal-close") {
+    if (firstOnOrAfterIndex === -1) {
+      throw new Error(`No hay close disponible en o despues de ${signalDate} para ${signal.ticker}.`);
+    }
+
+    return {
+      entryDate: rows[firstOnOrAfterIndex].date,
+      entryIndex: firstOnOrAfterIndex,
+      entryPrice: roundPrice(rows[firstOnOrAfterIndex].close),
+      entryPriceSource: "signal-close",
+      entryPriceWarning:
+        isFiniteNumber(signal.entryPrice) && signal.actualExecutionVerified !== true
+          ? "entryPrice provisto ignorado por entryPricePolicy signal-close"
+          : null
+    };
+  }
+
+  if (policy === "next-open") {
+    if (firstAfterIndex === -1) {
+      throw new Error(`No hay open disponible despues de ${signalDate} para ${signal.ticker}.`);
+    }
+
+    return {
+      entryDate: rows[firstAfterIndex].date,
+      entryIndex: firstAfterIndex,
+      entryPrice: roundPrice(rows[firstAfterIndex].open),
+      entryPriceSource: "next-open",
+      entryPriceWarning:
+        isFiniteNumber(signal.entryPrice) && signal.actualExecutionVerified !== true
+          ? "entryPrice provisto ignorado por entryPricePolicy next-open"
+          : null
+    };
+  }
+
+  if (policy === "next-close") {
+    if (firstAfterIndex === -1) {
+      throw new Error(`No hay close disponible despues de ${signalDate} para ${signal.ticker}.`);
+    }
+
+    return {
+      entryDate: rows[firstAfterIndex].date,
+      entryIndex: firstAfterIndex,
+      entryPrice: roundPrice(rows[firstAfterIndex].close),
+      entryPriceSource: "next-close",
+      entryPriceWarning:
+        isFiniteNumber(signal.entryPrice) && signal.actualExecutionVerified !== true
+          ? "entryPrice provisto ignorado por entryPricePolicy next-close"
+          : null
+    };
+  }
+
+  throw new Error(`entryPricePolicy no soportada: ${policy}`);
+}
+
+function buildEvaluationSeries(rows, entryResolution) {
+  const closeBasedEntry = entryResolution.entryPriceSource === "signal-close" ||
+    entryResolution.entryPriceSource === "next-close" ||
+    entryResolution.entryPriceSource === "provided";
+  const startOffset = closeBasedEntry ? 1 : 0;
+  const points = [
+    {
+      close: entryResolution.entryPrice,
+      date: entryResolution.entryDate,
+      day: 0,
+      returnPct: 0
+    }
+  ];
+
+  for (let index = entryResolution.entryIndex + startOffset; index < rows.length; index += 1) {
+    const row = rows[index];
+    const day = points.length;
+
+    points.push({
+      close: row.close,
+      date: row.date,
+      day,
+      returnPct: roundPercent(((row.close - entryResolution.entryPrice) / entryResolution.entryPrice) * 100)
+    });
+  }
 
   return {
-    closes,
-    entryDate: entryRow.date,
-    entryPrice: roundPrice(entryRow.close),
+    points,
+    startOffset
+  };
+}
+
+function buildLocalCsvSeries(signal, normalizedConfig) {
+  const rows = getLocalCsvRows(signal, normalizedConfig);
+  const entryResolution = resolveEntryFromRows(signal, rows, normalizedConfig);
+  const evaluation = buildEvaluationSeries(rows, entryResolution);
+
+  return {
+    entryDate: entryResolution.entryDate,
+    entryPrice: entryResolution.entryPrice,
+    entryPriceSource: entryResolution.entryPriceSource,
+    entryPriceWarning: entryResolution.entryPriceWarning,
+    evaluationPoints: evaluation.points,
     priceSource: resolvePriceFilePath(signal, normalizedConfig)
   };
 }
 
 function computeSignalMetrics(signal, priceSeries, config) {
-  const allReturns = priceSeries.closes.map((item) => item.returnPct);
+  const allReturns = priceSeries.evaluationPoints.map((item) => item.returnPct);
   const peakReturnPct = allReturns.length ? Math.max(...allReturns) : null;
   const maxDrawdownPct = allReturns.length
     ? Math.min(0, Math.min(...allReturns))
     : null;
-  const peakPoint = priceSeries.closes.find((item) => item.returnPct === peakReturnPct) || null;
+  const peakPoint = priceSeries.evaluationPoints.find((item) => item.returnPct === peakReturnPct) || null;
   const daysToPeak = peakPoint ? peakPoint.day : null;
   const returnsByHorizon = new Map(
     config.horizons.map((horizon) => {
-      const point = getCloseForDay(priceSeries.closes, horizon);
+      const point = getCloseForDay(priceSeries.evaluationPoints, horizon);
       return [horizon, point ? point.returnPct : null];
     })
   );
-  const earlyWindow = priceSeries.closes
-    .filter((item) => item.day <= Math.min(5, priceSeries.closes.length))
+  const earlyWindow = priceSeries.evaluationPoints
+    .filter((item) => item.day > 0 && item.day <= Math.min(5, priceSeries.evaluationPoints.length - 1))
     .map((item) => item.returnPct);
   const earlyMinReturn = earlyWindow.length ? Math.min(...earlyWindow) : null;
   const lastConfiguredHorizon = config.horizons.length
@@ -615,9 +772,14 @@ function computeSignalMetrics(signal, priceSeries, config) {
   return {
     assetType: signal.assetType,
     catalystType: signal.catalystType || null,
+    actualExecutionVerified: signal.actualExecutionVerified,
     daysToPeak,
     entryDate: priceSeries.entryDate || signal.signalDate,
     entryPrice: priceSeries.entryPrice,
+    entryPriceNote: signal.entryPriceNote,
+    entryPricePolicy: config.entryPricePolicy,
+    entryPriceSource: priceSeries.entryPriceSource,
+    entryPriceWarning: priceSeries.entryPriceWarning || null,
     failedFast: isFiniteNumber(earlyMinReturn) ? earlyMinReturn <= FAILED_FAST_THRESHOLD_PCT : null,
     falsePositive: isFiniteNumber(peakReturnPct) && peakReturnPct >= 7 && isFiniteNumber(finalReturn)
       ? finalReturn <= 0
@@ -701,6 +863,13 @@ function buildBreakdown(items, selector, fallback) {
 }
 
 function buildSummary(normalizedConfig, processedSignals, errors) {
+  const entryWarnings = processedSignals
+    .filter((item) => isNonEmptyString(item.entryPriceWarning))
+    .map((item) => ({
+      entryPriceWarning: item.entryPriceWarning,
+      entryPricePolicy: item.entryPricePolicy,
+      ticker: item.ticker
+    }));
   const notes = normalizedConfig.dataProvider === "local-csv"
     ? [
         "Este Historical Signal Backtest usa provider local-csv sobre archivos locales.",
@@ -731,6 +900,7 @@ function buildSummary(normalizedConfig, processedSignals, errors) {
     dataProvider: normalizedConfig.dataProvider,
     dryRun: normalizedConfig.dryRun,
     errorCount: errors.length,
+    entryPricePolicy: normalizedConfig.entryPricePolicy,
     hit10Rate: percentage(
       processedSignals.filter((item) => item.hit10pct === true).length,
       processedSignals.filter((item) => typeof item.hit10pct === "boolean").length
@@ -751,6 +921,8 @@ function buildSummary(normalizedConfig, processedSignals, errors) {
     runId: normalizedConfig.runId,
     signalsFile: normalizedConfig.signalsFile,
     totalSignals: normalizedConfig.totalSignals,
+    warningCount: entryWarnings.length,
+    warnings: entryWarnings,
     winRate: percentage(
       processedSignals.filter((item) => isFiniteNumber(item.return30d) && item.return30d > 0).length,
       processedSignals.filter((item) => isFiniteNumber(item.return30d)).length
@@ -788,11 +960,13 @@ function renderSummaryMarkdown(summary, errors) {
     `- runId: \`${summary.runId}\``,
     `- dryRun: \`${summary.dryRun}\``,
     `- dataProvider: \`${summary.dataProvider}\``,
+    `- entryPricePolicy: \`${summary.entryPricePolicy}\``,
     `- allowNetwork: \`${summary.allowNetwork}\``,
     `- signalsFile: \`${summary.signalsFile}\``,
     `- totalSignals: ${summary.totalSignals}`,
     `- completedSignals: ${summary.completedSignals}`,
     `- errorCount: ${summary.errorCount}`,
+    `- warningCount: ${summary.warningCount}`,
     "",
     "## Summary",
     `- winRate: ${formatPercent(summary.winRate)}`,
@@ -821,6 +995,11 @@ function renderSummaryMarkdown(summary, errors) {
     "",
     "## Notes",
     ...summary.notes.map((note) => `- ${note}`),
+    "",
+    "## Warnings",
+    ...(summary.warnings.length
+      ? summary.warnings.map((warning) => `- ${warning.ticker} | ${warning.entryPricePolicy} | ${warning.entryPriceWarning}`)
+      : ["- Sin warnings."]),
     "",
     "## Errors",
     ...(errors.length
@@ -932,7 +1111,18 @@ function processSignal(signal, normalizedConfig) {
 
   const maxHorizon = Math.max(...normalizedConfig.horizons, ...FIXED_HORIZONS);
   const priceSeries = buildMockSeries(signal, maxHorizon);
-  const metrics = computeSignalMetrics(signal, priceSeries, normalizedConfig);
+  const entryResolution = resolveEntryFromRows(signal, priceSeries.rows, normalizedConfig);
+  const metrics = computeSignalMetrics(
+    signal,
+    {
+      entryDate: entryResolution.entryDate,
+      entryPrice: entryResolution.entryPrice,
+      entryPriceSource: entryResolution.entryPriceSource,
+      entryPriceWarning: entryResolution.entryPriceWarning,
+      evaluationPoints: buildEvaluationSeries(priceSeries.rows, entryResolution).points
+    },
+    normalizedConfig
+  );
 
   return {
     ...metrics,
@@ -1020,6 +1210,7 @@ function runHistoricalBacktest(configPathInput) {
   const signalsJson = {
     dataProvider: normalizedConfig.dataProvider,
     dryRun: normalizedConfig.dryRun,
+    entryPricePolicy: normalizedConfig.entryPricePolicy,
     errors,
     generatedAt: checkpoint.updatedAt,
     runId: normalizedConfig.runId,

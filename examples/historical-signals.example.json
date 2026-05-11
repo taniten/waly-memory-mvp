@@ -4,10 +4,13 @@
       "ticker": "IPX",
       "signalDate": "2026-04-08",
       "assetType": "equity",
-      "playbookType": "outlier",
-      "setupRankAtEntry": "A",
+      "playbookType": "event-swing",
+      "setupRankAtEntry": "B",
+      "entryPrice": 35,
+      "actualExecutionVerified": true,
+      "entryPriceNote": "Entrada documentada localmente; sirve para mostrar una senal con provided y ejecucion verificada.",
       "sourceKind": "opportunity",
-      "notes": "Ejemplo para probar provider local-csv con archivo historico ficticio."
+      "notes": "Ejemplo con entryPrice provisto y ejecucion real verificada."
     },
     {
       "ticker": "AXSM",
@@ -17,17 +20,19 @@
       "setupRankAtEntry": "B",
       "catalystType": "earnings",
       "sourceKind": "opportunity",
-      "notes": "Segundo ejemplo para medir retornos reales desde CSV local ficticio."
+      "notes": "Ejemplo sin entryPrice: con policy next-open debe entrar al open del primer dia posterior."
     },
     {
-      "ticker": "SOXL",
-      "signalDate": "2026-03-18",
-      "assetType": "etf",
+      "ticker": "IPX",
+      "signalDate": "2026-04-09",
+      "assetType": "equity",
       "playbookType": "event-swing",
       "setupRankAtEntry": "B",
-      "catalystType": "unusual-volume-gap",
-      "sourceKind": "watchlist",
-      "notes": "Ejemplo ETF sin CSV local para validar registro de errores por ticker faltante."
+      "entryPrice": 35.7,
+      "actualExecutionVerified": false,
+      "entryPriceNote": "Precio manual no verificado; con policy next-open debe generar warning porque sera ignorado.",
+      "sourceKind": "opportunity",
+      "notes": "Ejemplo con entryPrice provisto pero sin ejecucion real verificada para mostrar warning de policy."
     },
     {
       "ticker": "VKTX",
@@ -37,8 +42,9 @@
       "setupRankAtEntry": "A",
       "catalystType": "fda",
       "entryPrice": 24.85,
+      "actualExecutionVerified": true,
       "sourceKind": "watchlist",
-      "notes": "Queda como ejemplo adicional fuera del dry-run de 3 señales."
+      "notes": "Queda como ejemplo adicional fuera del dry-run de 3 senales."
     }
   ]
 }

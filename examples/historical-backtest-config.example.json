@@ -11,5 +11,6 @@
   "dataProvider": "local-csv",
   "historicalPricesDir": "historical_prices",
   "priceFilePattern": "{ticker}.csv",
+  "entryPricePolicy": "next-open",
   "allowNetwork": false
 }
