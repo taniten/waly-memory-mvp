@@ -1,0 +1,44 @@
+{
+  "signals": [
+    {
+      "ticker": "VKTX",
+      "signalDate": "2026-04-16",
+      "assetType": "equity",
+      "playbookType": "event-swing",
+      "setupRankAtEntry": "A",
+      "catalystType": "fda",
+      "entryPrice": 24.85,
+      "sourceKind": "watchlist",
+      "notes": "Ejemplo de signal manual historica para validar infraestructura mock."
+    },
+    {
+      "ticker": "ACHV",
+      "signalDate": "2026-05-06",
+      "assetType": "equity",
+      "playbookType": "event-swing",
+      "setupRankAtEntry": "B",
+      "catalystType": "earnings",
+      "sourceKind": "opportunity",
+      "notes": "Radar tactico de biotech para probar metricas posteriores."
+    },
+    {
+      "ticker": "SOXL",
+      "signalDate": "2026-03-18",
+      "assetType": "etf",
+      "playbookType": "event-swing",
+      "setupRankAtEntry": "B",
+      "catalystType": "unusual-volume-gap",
+      "sourceKind": "watchlist",
+      "notes": "Ejemplo ETF para breakdown por assetType."
+    },
+    {
+      "ticker": "IPX",
+      "signalDate": "2026-04-08",
+      "assetType": "equity",
+      "playbookType": "outlier",
+      "setupRankAtEntry": "A",
+      "sourceKind": "opportunity",
+      "notes": "Ejemplo sin entryPrice para verificar precio mock deterministico."
+    }
+  ]
+}

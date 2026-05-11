@@ -2,6 +2,7 @@
 
 const path = require("path");
 const { generateBacktestReport } = require("./backtestEngine");
+const { runHistoricalBacktest } = require("./historicalBacktestEngine");
 const { initData } = require("./initData");
 const { generateReport } = require("./reporter");
 const { syncUniverse } = require("./universeEngine");
@@ -20,6 +21,7 @@ function printUsage() {
   node src/cli.js state
   node src/cli.js report
   node src/cli.js backtest [--dry-run]
+  node src/cli.js historical-backtest <config-json>
   node src/cli.js sync-universe
   node src/cli.js add-log <ruta-json>
   node src/cli.js add-outcome <ruta-json>
@@ -208,6 +210,18 @@ async function main() {
         console.log("Outcome backtest summary generado desde outcomes registrados; no es simulacion ex-ante.");
         console.log(`Output generado: ${result.outputPath}`);
         console.log(`Muestra resuelta: ${result.sampleSize}`);
+        break;
+      }
+      case "historical-backtest": {
+        const filePath = requirePath(argument, "historical-backtest");
+        const result = runHistoricalBacktest(filePath);
+        console.log("Historical Signal Backtest MVP generado.");
+        console.log(`Run dir: ${result.runDir}`);
+        console.log(`Signals output: ${result.signalsPath}`);
+        console.log(`Summary JSON: ${result.summaryJsonPath}`);
+        console.log(`Summary MD: ${result.summaryMarkdownPath}`);
+        console.log(`Signals procesadas: ${result.summary.completedSignals}/${result.summary.totalSignals}`);
+        console.log(`Errores: ${result.summary.errorCount}`);
         break;
       }
       case "sync-universe": {

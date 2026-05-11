@@ -1,0 +1,870 @@
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const {
+  VALID_CATALYST_TYPES,
+  VALID_OUTCOME_SOURCE_KINDS,
+  VALID_PLAYBOOK_TYPES,
+  VALID_SETUP_RANKS
+} = require("./constants");
+const { BACKTESTS_DIR } = require("./storage");
+const {
+  isFiniteNumber,
+  isNonEmptyString,
+  isValidDateOnlyString,
+  isValidTimestampString,
+  normalizeTextEnum,
+  normalizeTicker
+} = require("./validators");
+
+const FIXED_HORIZONS = [5, 10, 20, 30];
+const FIXED_HIT_TARGETS = [7, 10, 15];
+const DEFAULT_HORIZONS = FIXED_HORIZONS;
+const DEFAULT_HIT_TARGETS = FIXED_HIT_TARGETS;
+const DEFAULT_CHECKPOINT_EVERY = 25;
+const FAILED_FAST_THRESHOLD_PCT = -7;
+
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      throw new Error(`No existe el archivo ${filePath}.`);
+    }
+
+    if (error instanceof SyntaxError) {
+      throw new Error(`JSON invalido en ${filePath}: ${error.message}`);
+    }
+
+    throw error;
+  }
+}
+
+function writeFileAtomic(filePath, contents) {
+  const directory = path.dirname(filePath);
+  const tempPath = path.join(
+    directory,
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`
+  );
+
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(tempPath, contents, "utf8");
+
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+
+  fs.renameSync(tempPath, filePath);
+}
+
+function writeJsonAtomic(filePath, value) {
+  writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function ensureBacktestsPath(targetPath) {
+  const resolvedBacktests = path.resolve(BACKTESTS_DIR);
+  const resolvedTarget = path.resolve(targetPath);
+  const relative = path.relative(resolvedBacktests, resolvedTarget);
+
+  if (
+    relative.startsWith("..") ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(`No se permite escribir fuera de backtests/: ${resolvedTarget}`);
+  }
+
+  return resolvedTarget;
+}
+
+function resolveConfigPath(configPath) {
+  const absolutePath = path.resolve(process.cwd(), configPath);
+
+  if (!fs.existsSync(absolutePath)) {
+    throw new Error(`No existe la config ${absolutePath}.`);
+  }
+
+  return absolutePath;
+}
+
+function resolveSignalsPath(signalsFile, configPath) {
+  const candidatePaths = [
+    path.resolve(path.dirname(configPath), signalsFile),
+    path.resolve(process.cwd(), signalsFile)
+  ];
+
+  const found = candidatePaths.find((candidate) => fs.existsSync(candidate));
+
+  if (!found) {
+    throw new Error(`No existe signalsFile: ${signalsFile}.`);
+  }
+
+  return found;
+}
+
+function resolveOutputRoot(outputDir) {
+  if (!isNonEmptyString(outputDir)) {
+    return ensureBacktestsPath(BACKTESTS_DIR);
+  }
+
+  const absolute = path.isAbsolute(outputDir)
+    ? outputDir
+    : path.resolve(process.cwd(), outputDir);
+
+  return ensureBacktestsPath(absolute);
+}
+
+function isPositiveInteger(value) {
+  return Number.isInteger(value) && value > 0;
+}
+
+function formatPercent(value) {
+  if (!isFiniteNumber(value)) {
+    return "n/d";
+  }
+
+  const prefix = value > 0 ? "+" : "";
+  return `${prefix}${value.toFixed(1)}%`;
+}
+
+function median(values) {
+  if (!values.length) {
+    return null;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+
+  if (sorted.length % 2 === 1) {
+    return Number(sorted[middle].toFixed(1));
+  }
+
+  return Number((((sorted[middle - 1] + sorted[middle]) / 2)).toFixed(1));
+}
+
+function average(values) {
+  if (!values.length) {
+    return null;
+  }
+
+  return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1));
+}
+
+function percentage(part, total) {
+  if (!total) {
+    return null;
+  }
+
+  return Number(((part / total) * 100).toFixed(1));
+}
+
+function toSafeLabel(value, fallback) {
+  return isNonEmptyString(value) ? value : fallback;
+}
+
+function stableHash(input) {
+  let hash = 2166136261;
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return hash >>> 0;
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function roundPrice(value) {
+  return Number(value.toFixed(2));
+}
+
+function roundPercent(value) {
+  return Number(value.toFixed(1));
+}
+
+function validateHistoricalSignal(signal, index) {
+  const issues = [];
+  const label = `signals[${index}]`;
+
+  if (!signal || typeof signal !== "object" || Array.isArray(signal)) {
+    issues.push(`${label} debe ser un objeto simple.`);
+    return issues;
+  }
+
+  if (!isNonEmptyString(signal.ticker)) {
+    issues.push(`${label}.ticker es obligatorio.`);
+  }
+
+  if (!isNonEmptyString(signal.signalDate) || !isValidDateOnlyString(signal.signalDate)) {
+    issues.push(`${label}.signalDate debe usar formato YYYY-MM-DD valido.`);
+  }
+
+  if (!isNonEmptyString(signal.assetType) || !["equity", "etf"].includes(signal.assetType)) {
+    issues.push(`${label}.assetType debe ser equity o etf.`);
+  }
+
+  if (!isNonEmptyString(signal.playbookType) || !VALID_PLAYBOOK_TYPES.includes(signal.playbookType)) {
+    issues.push(`${label}.playbookType debe ser uno de ${VALID_PLAYBOOK_TYPES.join(", ")}.`);
+  }
+
+  if (
+    !isNonEmptyString(signal.setupRankAtEntry) ||
+    !VALID_SETUP_RANKS.includes(signal.setupRankAtEntry)
+  ) {
+    issues.push(`${label}.setupRankAtEntry debe ser uno de ${VALID_SETUP_RANKS.join(", ")}.`);
+  }
+
+  if (
+    signal.catalystType !== undefined &&
+    (!isNonEmptyString(signal.catalystType) || !VALID_CATALYST_TYPES.includes(signal.catalystType))
+  ) {
+    issues.push(`${label}.catalystType debe ser uno de ${VALID_CATALYST_TYPES.join(", ")} si existe.`);
+  }
+
+  if (
+    signal.entryPrice !== undefined &&
+    (!isFiniteNumber(signal.entryPrice) || signal.entryPrice <= 0)
+  ) {
+    issues.push(`${label}.entryPrice debe ser un numero mayor a 0 si existe.`);
+  }
+
+  if (
+    signal.sourceKind !== undefined &&
+    (!isNonEmptyString(signal.sourceKind) || !VALID_OUTCOME_SOURCE_KINDS.includes(signal.sourceKind))
+  ) {
+    issues.push(`${label}.sourceKind debe ser uno de ${VALID_OUTCOME_SOURCE_KINDS.join(", ")} si existe.`);
+  }
+
+  if (signal.notes !== undefined && !isNonEmptyString(signal.notes)) {
+    issues.push(`${label}.notes debe ser string no vacio si existe.`);
+  }
+
+  return issues;
+}
+
+function validateSignalsFile(signalsData) {
+  if (!signalsData || !Array.isArray(signalsData.signals)) {
+    throw new Error("historical signals debe contener un array signals.");
+  }
+
+  const errors = signalsData.signals.flatMap((signal, index) =>
+    validateHistoricalSignal(signal, index)
+  );
+
+  if (errors.length) {
+    throw new Error(errors.join("\n"));
+  }
+}
+
+function validateConfig(config) {
+  const errors = [];
+
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    throw new Error("La config de historical-backtest debe ser un objeto JSON.");
+  }
+
+  if (!isNonEmptyString(config.runId) || !/^[a-z0-9][a-z0-9-_]*$/i.test(config.runId)) {
+    errors.push("runId es obligatorio y solo puede usar letras, numeros, - y _.");
+  }
+
+  if (config.dryRun !== undefined && typeof config.dryRun !== "boolean") {
+    errors.push("dryRun debe ser boolean si existe.");
+  }
+
+  if (config.maxSignals !== undefined && !isPositiveInteger(config.maxSignals)) {
+    errors.push("maxSignals debe ser un entero mayor a 0 si existe.");
+  }
+
+  if (config.dryRun === true && !isPositiveInteger(config.maxSignals)) {
+    errors.push("dryRun=true requiere maxSignals para evitar corridas largas.");
+  }
+
+  if (
+    config.checkpointEvery !== undefined &&
+    !isPositiveInteger(config.checkpointEvery)
+  ) {
+    errors.push("checkpointEvery debe ser un entero mayor a 0 si existe.");
+  }
+
+  if (config.outputDir !== undefined && !isNonEmptyString(config.outputDir)) {
+    errors.push("outputDir debe ser string no vacio si existe.");
+  }
+
+  if (
+    config.resumeFromCheckpoint !== undefined &&
+    typeof config.resumeFromCheckpoint !== "boolean"
+  ) {
+    errors.push("resumeFromCheckpoint debe ser boolean si existe.");
+  }
+
+  if (!isNonEmptyString(config.signalsFile)) {
+    errors.push("signalsFile es obligatorio.");
+  }
+
+  if (
+    config.horizons !== undefined &&
+    (!Array.isArray(config.horizons) || config.horizons.some((value) => !isPositiveInteger(value)))
+  ) {
+    errors.push("horizons debe ser un array de enteros positivos si existe.");
+  }
+
+  if (
+    config.hitTargetsPct !== undefined &&
+    (!Array.isArray(config.hitTargetsPct) || config.hitTargetsPct.some((value) => !isPositiveInteger(value)))
+  ) {
+    errors.push("hitTargetsPct debe ser un array de enteros positivos si existe.");
+  }
+
+  if (
+    !isNonEmptyString(config.dataProvider) ||
+    !["mock", "local"].includes(normalizeTextEnum(config.dataProvider))
+  ) {
+    errors.push("dataProvider debe ser mock o local.");
+  }
+
+  if (typeof config.allowNetwork !== "boolean") {
+    errors.push("allowNetwork debe ser boolean.");
+  }
+
+  if (config.allowNetwork !== false) {
+    errors.push("allowNetwork debe ser false en Historical Signal Backtest MVP.");
+  }
+
+  if (errors.length) {
+    throw new Error(errors.join("\n"));
+  }
+}
+
+function normalizeConfig(config, configPath) {
+  const outputRoot = resolveOutputRoot(config.outputDir || BACKTESTS_DIR);
+  const signalsPath = resolveSignalsPath(config.signalsFile, configPath);
+
+  return {
+    allowNetwork: false,
+    checkpointEvery: config.checkpointEvery || DEFAULT_CHECKPOINT_EVERY,
+    configPath,
+    dataProvider: normalizeTextEnum(config.dataProvider),
+    dryRun: config.dryRun === true,
+    hitTargetsPct: Array.from(new Set(config.hitTargetsPct || DEFAULT_HIT_TARGETS)).sort((left, right) => left - right),
+    horizons: Array.from(new Set(config.horizons || DEFAULT_HORIZONS)).sort((left, right) => left - right),
+    maxSignals: config.maxSignals,
+    outputRoot,
+    resumeFromCheckpoint: config.resumeFromCheckpoint === true,
+    runId: config.runId,
+    signalsFile: config.signalsFile,
+    signalsPath
+  };
+}
+
+function loadSignals(signalsPath) {
+  const data = readJsonFile(signalsPath);
+  validateSignalsFile(data);
+  return data.signals.map((signal) => ({
+    ...signal,
+    assetType: normalizeTextEnum(signal.assetType),
+    catalystType: signal.catalystType ? normalizeTextEnum(signal.catalystType) : undefined,
+    playbookType: normalizeTextEnum(signal.playbookType),
+    setupRankAtEntry: signal.setupRankAtEntry,
+    sourceKind: signal.sourceKind ? normalizeTextEnum(signal.sourceKind) : undefined,
+    ticker: normalizeTicker(signal.ticker)
+  }));
+}
+
+function buildRunPaths(normalizedConfig) {
+  const runDir = ensureBacktestsPath(path.join(normalizedConfig.outputRoot, normalizedConfig.runId));
+
+  return {
+    checkpointPath: path.join(runDir, "checkpoint.json"),
+    runDir,
+    signalsPath: path.join(runDir, "signals.json"),
+    summaryJsonPath: path.join(runDir, "summary.json"),
+    summaryMarkdownPath: path.join(runDir, "summary.md")
+  };
+}
+
+function buildMockSeries(signal, maxHorizon) {
+  const seedKey = `${signal.ticker}|${signal.signalDate}|${signal.playbookType}|${signal.setupRankAtEntry}`;
+  const seed = stableHash(seedKey);
+  const generatedEntryPrice = roundPrice(8 + ((seed % 9200) / 100));
+  const entryPrice = isFiniteNumber(signal.entryPrice) && signal.entryPrice > 0
+    ? roundPrice(signal.entryPrice)
+    : generatedEntryPrice;
+  const closes = [];
+  let price = entryPrice;
+
+  for (let day = 1; day <= maxHorizon; day += 1) {
+    const daySeed = stableHash(`${seedKey}|${day}`);
+    const drift = (((seed >>> 3) % 17) - 8) / 5000;
+    const wave = Math.sin((day + (seed % 19)) * 0.85) * (0.004 + ((seed % 7) / 1000));
+    const noise = (((daySeed % 1000) / 1000) - 0.5) * 0.035;
+    const shockDay = 2 + (seed % 5);
+    const shockMagnitude = 0.01 + ((seed % 8) / 1000);
+    const shockDirection = seed % 2 === 0 ? 1 : -1;
+    const shock = day === shockDay ? shockDirection * shockMagnitude : 0;
+    const dailyReturn = clamp(drift + wave + noise + shock, -0.12, 0.12);
+
+    price = roundPrice(price * (1 + dailyReturn));
+    closes.push({
+      close: price,
+      day,
+      returnPct: roundPercent(((price - entryPrice) / entryPrice) * 100)
+    });
+  }
+
+  return {
+    closes,
+    entryPrice,
+    mockSeed: seed
+  };
+}
+
+function getCloseForDay(series, day) {
+  return series.find((item) => item.day === day) || null;
+}
+
+function computeSignalMetrics(signal, priceSeries, config) {
+  const allReturns = priceSeries.closes.map((item) => item.returnPct);
+  const peakReturnPct = allReturns.length ? Math.max(...allReturns) : null;
+  const maxDrawdownPct = allReturns.length
+    ? Math.min(0, Math.min(...allReturns))
+    : null;
+  const peakPoint = priceSeries.closes.find((item) => item.returnPct === peakReturnPct) || null;
+  const daysToPeak = peakPoint ? peakPoint.day : null;
+  const returnsByHorizon = new Map(
+    config.horizons.map((horizon) => {
+      const point = getCloseForDay(priceSeries.closes, horizon);
+      return [horizon, point ? point.returnPct : null];
+    })
+  );
+  const earlyWindow = priceSeries.closes
+    .filter((item) => item.day <= Math.min(5, priceSeries.closes.length))
+    .map((item) => item.returnPct);
+  const earlyMinReturn = earlyWindow.length ? Math.min(...earlyWindow) : null;
+  const lastConfiguredHorizon = config.horizons.length
+    ? config.horizons[config.horizons.length - 1]
+    : FIXED_HORIZONS[FIXED_HORIZONS.length - 1];
+  const finalReturn = returnsByHorizon.get(lastConfiguredHorizon);
+
+  return {
+    assetType: signal.assetType,
+    catalystType: signal.catalystType || null,
+    daysToPeak,
+    entryPrice: priceSeries.entryPrice,
+    failedFast: isFiniteNumber(earlyMinReturn) ? earlyMinReturn <= FAILED_FAST_THRESHOLD_PCT : null,
+    falsePositive: isFiniteNumber(peakReturnPct) && peakReturnPct >= 7 && isFiniteNumber(finalReturn)
+      ? finalReturn <= 0
+      : false,
+    hit10pct: isFiniteNumber(peakReturnPct) ? peakReturnPct >= 10 : null,
+    hit15pct: isFiniteNumber(peakReturnPct) ? peakReturnPct >= 15 : null,
+    hit7pct: isFiniteNumber(peakReturnPct) ? peakReturnPct >= 7 : null,
+    maxDrawdownPct,
+    notes: signal.notes || "",
+    peakReturnPct,
+    playbookType: signal.playbookType,
+    return10d: returnsByHorizon.get(10) ?? null,
+    return20d: returnsByHorizon.get(20) ?? null,
+    return30d: returnsByHorizon.get(30) ?? null,
+    return5d: returnsByHorizon.get(5) ?? null,
+    setupRankAtEntry: signal.setupRankAtEntry,
+    signalDate: signal.signalDate,
+    sourceKind: signal.sourceKind || null,
+    ticker: signal.ticker
+  };
+}
+
+function buildBucketSummary(items) {
+  const completedSignals = items.length;
+  const winsMeasured = items.filter((item) => isFiniteNumber(item.return30d));
+  const wins = winsMeasured.filter((item) => item.return30d > 0).length;
+  const hit7Measured = items.filter((item) => typeof item.hit7pct === "boolean");
+  const hit10Measured = items.filter((item) => typeof item.hit10pct === "boolean");
+  const hit15Measured = items.filter((item) => typeof item.hit15pct === "boolean");
+
+  return {
+    avgMaxDrawdown: average(items.map((item) => item.maxDrawdownPct).filter(isFiniteNumber)),
+    avgPeakReturn: average(items.map((item) => item.peakReturnPct).filter(isFiniteNumber)),
+    avgReturn10d: average(items.map((item) => item.return10d).filter(isFiniteNumber)),
+    avgReturn20d: average(items.map((item) => item.return20d).filter(isFiniteNumber)),
+    avgReturn30d: average(items.map((item) => item.return30d).filter(isFiniteNumber)),
+    avgReturn5d: average(items.map((item) => item.return5d).filter(isFiniteNumber)),
+    completedSignals,
+    hit10Rate: percentage(
+      hit10Measured.filter((item) => item.hit10pct).length,
+      hit10Measured.length
+    ),
+    hit15Rate: percentage(
+      hit15Measured.filter((item) => item.hit15pct).length,
+      hit15Measured.length
+    ),
+    hit7Rate: percentage(
+      hit7Measured.filter((item) => item.hit7pct).length,
+      hit7Measured.length
+    ),
+    medianDaysToPeak: median(items.map((item) => item.daysToPeak).filter(isFiniteNumber)),
+    winRate: percentage(wins, winsMeasured.length)
+  };
+}
+
+function buildBreakdown(items, selector, fallback) {
+  const buckets = new Map();
+
+  items.forEach((item) => {
+    const key = toSafeLabel(selector(item), fallback);
+
+    if (!buckets.has(key)) {
+      buckets.set(key, []);
+    }
+
+    buckets.get(key).push(item);
+  });
+
+  return [...buckets.entries()]
+    .sort((left, right) => {
+      if (right[1].length !== left[1].length) {
+        return right[1].length - left[1].length;
+      }
+
+      return left[0].localeCompare(right[0]);
+    })
+    .map(([key, bucketItems]) => ({
+      key,
+      ...buildBucketSummary(bucketItems)
+    }));
+}
+
+function buildSummary(normalizedConfig, processedSignals, errors) {
+  return {
+    allowNetwork: normalizedConfig.allowNetwork,
+    avgMaxDrawdown: average(processedSignals.map((item) => item.maxDrawdownPct).filter(isFiniteNumber)),
+    avgPeakReturn: average(processedSignals.map((item) => item.peakReturnPct).filter(isFiniteNumber)),
+    avgReturn10d: average(processedSignals.map((item) => item.return10d).filter(isFiniteNumber)),
+    avgReturn20d: average(processedSignals.map((item) => item.return20d).filter(isFiniteNumber)),
+    avgReturn30d: average(processedSignals.map((item) => item.return30d).filter(isFiniteNumber)),
+    avgReturn5d: average(processedSignals.map((item) => item.return5d).filter(isFiniteNumber)),
+    breakdown: {
+      assetType: buildBreakdown(processedSignals, (item) => item.assetType, "unknown"),
+      catalystType: buildBreakdown(processedSignals, (item) => item.catalystType, "none"),
+      playbookType: buildBreakdown(processedSignals, (item) => item.playbookType, "unknown"),
+      setupRankAtEntry: buildBreakdown(processedSignals, (item) => item.setupRankAtEntry, "unknown")
+    },
+    completedSignals: processedSignals.length,
+    dataProvider: normalizedConfig.dataProvider,
+    dryRun: normalizedConfig.dryRun,
+    errorCount: errors.length,
+    hit10Rate: percentage(
+      processedSignals.filter((item) => item.hit10pct === true).length,
+      processedSignals.filter((item) => typeof item.hit10pct === "boolean").length
+    ),
+    hit15Rate: percentage(
+      processedSignals.filter((item) => item.hit15pct === true).length,
+      processedSignals.filter((item) => typeof item.hit15pct === "boolean").length
+    ),
+    hit7Rate: percentage(
+      processedSignals.filter((item) => item.hit7pct === true).length,
+      processedSignals.filter((item) => typeof item.hit7pct === "boolean").length
+    ),
+    hitTargetsPct: normalizedConfig.hitTargetsPct,
+    horizons: normalizedConfig.horizons,
+    maxSignals: normalizedConfig.maxSignals || null,
+    medianDaysToPeak: median(processedSignals.map((item) => item.daysToPeak).filter(isFiniteNumber)),
+    notes: [
+      "Este Historical Signal Backtest MVP usa provider mock deterministico.",
+      "No valida edge real hasta conectarlo con history de precios reales.",
+      "Las metricas se calculan solo con trayectoria posterior a signalDate para evitar look-ahead bias en la medicion."
+    ],
+    runId: normalizedConfig.runId,
+    signalsFile: normalizedConfig.signalsFile,
+    totalSignals: normalizedConfig.totalSignals,
+    winRate: percentage(
+      processedSignals.filter((item) => isFiniteNumber(item.return30d) && item.return30d > 0).length,
+      processedSignals.filter((item) => isFiniteNumber(item.return30d)).length
+    )
+  };
+}
+
+function renderBreakdownTable(items) {
+  if (!items.length) {
+    return "_Sin muestra._";
+  }
+
+  const header = [
+    "| bucket | count | winRate | hit7Rate | hit10Rate | hit15Rate | avg5d | avg10d | avg20d | avg30d | avgPeak | avgMaxDD | medianDaysToPeak |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+  ];
+  const rows = items.map((item) =>
+    `| ${item.key} | ${item.completedSignals} | ${formatPercent(item.winRate)} | ${formatPercent(item.hit7Rate)} | ${formatPercent(item.hit10Rate)} | ${formatPercent(item.hit15Rate)} | ${formatPercent(item.avgReturn5d)} | ${formatPercent(item.avgReturn10d)} | ${formatPercent(item.avgReturn20d)} | ${formatPercent(item.avgReturn30d)} | ${formatPercent(item.avgPeakReturn)} | ${formatPercent(item.avgMaxDrawdown)} | ${item.medianDaysToPeak === null ? "n/d" : item.medianDaysToPeak} |`
+  );
+
+  return [...header, ...rows].join("\n");
+}
+
+function renderSummaryMarkdown(summary, errors) {
+  return [
+    `# Historical Signal Backtest MVP - ${summary.runId}`,
+    "",
+    "_Infraestructura ex-ante con provider mock deterministico. No valida edge real._",
+    "",
+    "## Run",
+    `- runId: \`${summary.runId}\``,
+    `- dryRun: \`${summary.dryRun}\``,
+    `- dataProvider: \`${summary.dataProvider}\``,
+    `- allowNetwork: \`${summary.allowNetwork}\``,
+    `- signalsFile: \`${summary.signalsFile}\``,
+    `- totalSignals: ${summary.totalSignals}`,
+    `- completedSignals: ${summary.completedSignals}`,
+    `- errorCount: ${summary.errorCount}`,
+    "",
+    "## Summary",
+    `- winRate: ${formatPercent(summary.winRate)}`,
+    `- hit7Rate: ${formatPercent(summary.hit7Rate)}`,
+    `- hit10Rate: ${formatPercent(summary.hit10Rate)}`,
+    `- hit15Rate: ${formatPercent(summary.hit15Rate)}`,
+    `- avgReturn5d: ${formatPercent(summary.avgReturn5d)}`,
+    `- avgReturn10d: ${formatPercent(summary.avgReturn10d)}`,
+    `- avgReturn20d: ${formatPercent(summary.avgReturn20d)}`,
+    `- avgReturn30d: ${formatPercent(summary.avgReturn30d)}`,
+    `- avgPeakReturn: ${formatPercent(summary.avgPeakReturn)}`,
+    `- avgMaxDrawdown: ${formatPercent(summary.avgMaxDrawdown)}`,
+    `- medianDaysToPeak: ${summary.medianDaysToPeak === null ? "n/d" : summary.medianDaysToPeak}`,
+    "",
+    "## Breakdown: assetType",
+    renderBreakdownTable(summary.breakdown.assetType),
+    "",
+    "## Breakdown: playbookType",
+    renderBreakdownTable(summary.breakdown.playbookType),
+    "",
+    "## Breakdown: setupRankAtEntry",
+    renderBreakdownTable(summary.breakdown.setupRankAtEntry),
+    "",
+    "## Breakdown: catalystType",
+    renderBreakdownTable(summary.breakdown.catalystType),
+    "",
+    "## Notes",
+    ...summary.notes.map((note) => `- ${note}`),
+    "",
+    "## Errors",
+    ...(errors.length
+      ? errors.map((error) => `- index ${error.index} | ${error.ticker || "n/d"} | ${error.message}`)
+      : ["- Sin errores."])
+  ].join("\n");
+}
+
+function loadCheckpoint(checkpointPath, normalizedConfig) {
+  if (!fs.existsSync(checkpointPath)) {
+    throw new Error(`No existe checkpoint para resume: ${checkpointPath}`);
+  }
+
+  const checkpoint = readJsonFile(checkpointPath);
+
+  if (!checkpoint || typeof checkpoint !== "object" || Array.isArray(checkpoint)) {
+    throw new Error("checkpoint.json invalido.");
+  }
+
+  if (checkpoint.runId !== normalizedConfig.runId) {
+    throw new Error(`checkpoint.json pertenece a otro runId: ${checkpoint.runId}`);
+  }
+
+  if (
+    checkpoint.startedAt !== undefined &&
+    !isValidTimestampString(checkpoint.startedAt)
+  ) {
+    throw new Error("checkpoint.startedAt no es ISO valido.");
+  }
+
+  if (
+    checkpoint.updatedAt !== undefined &&
+    !isValidTimestampString(checkpoint.updatedAt)
+  ) {
+    throw new Error("checkpoint.updatedAt no es ISO valido.");
+  }
+
+  if (
+    checkpoint.lastProcessedIndex !== undefined &&
+    checkpoint.lastProcessedIndex !== null &&
+    checkpoint.lastProcessedIndex !== -1 &&
+    !Number.isInteger(checkpoint.lastProcessedIndex)
+  ) {
+    throw new Error("checkpoint.lastProcessedIndex debe ser entero.");
+  }
+
+  if (!Array.isArray(checkpoint.processedSignals)) {
+    throw new Error("checkpoint.processedSignals debe ser un array.");
+  }
+
+  if (!Array.isArray(checkpoint.errors)) {
+    throw new Error("checkpoint.errors debe ser un array.");
+  }
+
+  return checkpoint;
+}
+
+function writeCheckpoint(checkpointPath, payload) {
+  writeJsonAtomic(checkpointPath, payload);
+}
+
+function createCheckpointPayload(options) {
+  const {
+    runId,
+    startedAt,
+    updatedAt,
+    lastProcessedIndex,
+    processedSignals,
+    errors
+  } = options;
+
+  return {
+    errors,
+    lastProcessedIndex,
+    processedSignals,
+    runId,
+    startedAt,
+    updatedAt
+  };
+}
+
+function selectSignals(allSignals, normalizedConfig) {
+  if (isPositiveInteger(normalizedConfig.maxSignals)) {
+    return allSignals.slice(0, normalizedConfig.maxSignals);
+  }
+
+  return allSignals;
+}
+
+function processSignal(signal, normalizedConfig) {
+  if (normalizedConfig.allowNetwork !== false) {
+    throw new Error("allowNetwork=true no esta permitido en este MVP.");
+  }
+
+  if (normalizedConfig.dataProvider === "local") {
+    throw new Error("dataProvider=local todavia no esta implementado en Fase 2A.");
+  }
+
+  if (normalizedConfig.dataProvider !== "mock") {
+    throw new Error(`dataProvider no soportado: ${normalizedConfig.dataProvider}`);
+  }
+
+  const maxHorizon = Math.max(...normalizedConfig.horizons, ...FIXED_HORIZONS);
+  const priceSeries = buildMockSeries(signal, maxHorizon);
+  const metrics = computeSignalMetrics(signal, priceSeries, normalizedConfig);
+
+  return {
+    ...metrics,
+    mockSeed: priceSeries.mockSeed,
+    provider: "mock"
+  };
+}
+
+function writeOutputs(runPaths, payload) {
+  writeJsonAtomic(runPaths.signalsPath, payload.signalsJson);
+  writeJsonAtomic(runPaths.summaryJsonPath, payload.summaryJson);
+  writeFileAtomic(runPaths.summaryMarkdownPath, payload.summaryMarkdown);
+  writeCheckpoint(runPaths.checkpointPath, payload.checkpoint);
+}
+
+function runHistoricalBacktest(configPathInput) {
+  const configPath = resolveConfigPath(configPathInput);
+  const config = readJsonFile(configPath);
+
+  validateConfig(config);
+
+  const normalizedConfig = normalizeConfig(config, configPath);
+  const runPaths = buildRunPaths(normalizedConfig);
+  const allSignals = loadSignals(normalizedConfig.signalsPath);
+  const selectedSignals = selectSignals(allSignals, normalizedConfig);
+  const now = new Date().toISOString();
+  let startedAt = now;
+  let lastProcessedIndex = -1;
+  let processedSignals = [];
+  let errors = [];
+
+  normalizedConfig.totalSignals = selectedSignals.length;
+  fs.mkdirSync(runPaths.runDir, { recursive: true });
+
+  if (normalizedConfig.resumeFromCheckpoint) {
+    const checkpoint = loadCheckpoint(runPaths.checkpointPath, normalizedConfig);
+    startedAt = checkpoint.startedAt || now;
+    lastProcessedIndex = Number.isInteger(checkpoint.lastProcessedIndex)
+      ? checkpoint.lastProcessedIndex
+      : -1;
+    processedSignals = checkpoint.processedSignals || [];
+    errors = checkpoint.errors || [];
+  }
+
+  for (let index = lastProcessedIndex + 1; index < selectedSignals.length; index += 1) {
+    const signal = selectedSignals[index];
+
+    try {
+      processedSignals.push(processSignal(signal, normalizedConfig));
+    } catch (error) {
+      errors.push({
+        index,
+        message: error.message,
+        signalDate: signal && signal.signalDate ? signal.signalDate : null,
+        ticker: signal && signal.ticker ? signal.ticker : null
+      });
+    }
+
+    lastProcessedIndex = index;
+
+    if ((index + 1) % normalizedConfig.checkpointEvery === 0) {
+      writeCheckpoint(
+        runPaths.checkpointPath,
+        createCheckpointPayload({
+          errors,
+          lastProcessedIndex,
+          processedSignals,
+          runId: normalizedConfig.runId,
+          startedAt,
+          updatedAt: new Date().toISOString()
+        })
+      );
+    }
+  }
+
+  const summary = buildSummary(normalizedConfig, processedSignals, errors);
+  const checkpoint = createCheckpointPayload({
+    errors,
+    lastProcessedIndex,
+    processedSignals,
+    runId: normalizedConfig.runId,
+    startedAt,
+    updatedAt: new Date().toISOString()
+  });
+  const signalsJson = {
+    dataProvider: normalizedConfig.dataProvider,
+    dryRun: normalizedConfig.dryRun,
+    errors,
+    generatedAt: checkpoint.updatedAt,
+    runId: normalizedConfig.runId,
+    signals: processedSignals
+  };
+  const summaryJson = {
+    ...summary,
+    generatedAt: checkpoint.updatedAt,
+    runDir: runPaths.runDir
+  };
+  const summaryMarkdown = renderSummaryMarkdown(summaryJson, errors);
+
+  writeOutputs(runPaths, {
+    checkpoint,
+    signalsJson,
+    summaryJson,
+    summaryMarkdown
+  });
+
+  return {
+    checkpoint,
+    runDir: runPaths.runDir,
+    signalsPath: runPaths.signalsPath,
+    summary,
+    summaryJsonPath: runPaths.summaryJsonPath,
+    summaryMarkdownPath: runPaths.summaryMarkdownPath
+  };
+}
+
+module.exports = {
+  runHistoricalBacktest
+};

@@ -1,0 +1,13 @@
+{
+  "runId": "demo-historical-backtest-mock",
+  "dryRun": true,
+  "maxSignals": 3,
+  "checkpointEvery": 1,
+  "outputDir": "backtests",
+  "resumeFromCheckpoint": false,
+  "signalsFile": "./historical-signals.example.json",
+  "horizons": [5, 10, 20, 30],
+  "hitTargetsPct": [7, 10, 15],
+  "dataProvider": "mock",
+  "allowNetwork": false
+}

@@ -14,6 +14,14 @@ reports/*.md.bak
 backtests/*.md
 backtests/*.json
 backtests/*.bak
+backtests/*/
+backtests/**/*.json
+backtests/**/*.md
+backtests/**/*.bak
+backtests/**/checkpoint.json
+backtests/**/signals.json
+backtests/**/summary.json
+backtests/**/summary.md
 !backtests/.gitkeep
 waly-daily-report*.md
 waly-outlier-hunt-report*.md

@@ -139,6 +139,7 @@ node src/cli.js init-data
 node src/cli.js state
 node src/cli.js report
 node src/cli.js backtest
+node src/cli.js historical-backtest ./examples/historical-backtest-config.example.json
 node src/cli.js sync-universe
 node src/cli.js add-log ./examples/nueva-revision.example.json
 node src/cli.js add-outcome ./examples/nuevo-outcome.example.json
@@ -153,6 +154,7 @@ npm run init-data
 npm run state
 npm run report
 npm run backtest
+npm run historical-backtest -- ./examples/historical-backtest-config.example.json
 npm run sync-universe
 npm run log -- ./examples/nueva-revision.example.json
 npm run outcome -- ./examples/nuevo-outcome.example.json
@@ -449,6 +451,36 @@ Si queres auditar sin escribir archivos:
 ```bash
 node src/cli.js backtest --dry-run
 ```
+
+## Historical Signal Backtest MVP
+
+`node src/cli.js historical-backtest <config-json>` crea un modulo separado del Outcome Summary y trabaja sobre senales historicas manuales ex-ante. La idea es probar infraestructura de medicion, checkpoint/resume y metricas auditables sin tocar `data/` ni mezclar este flujo con outcomes ya cargados.
+
+Esta primera version:
+
+- usa un archivo manual de senales historicas
+- escribe solo dentro de `backtests/<runId>/`
+- guarda `signals.json`, `summary.json`, `summary.md` y `checkpoint.json`
+- usa `dataProvider="mock"` con trayectorias sinteticas deterministicas
+- no valida edge real todavia
+
+Importante:
+
+- el provider `mock` no usa precios historicos reales y no sirve para validar ventaja estadistica
+- si `allowNetwork=false`, WALY no hace requests externos
+- el objetivo actual es probar plumbing, audit trail, checkpoint/resume y calculo de metricas posteriores
+- el backtest real posterior va a necesitar history de precios real y un control mas estricto de look-ahead bias
+
+Ejemplo rapido:
+
+```bash
+node src/cli.js historical-backtest ./examples/historical-backtest-config.example.json
+```
+
+Archivos de ejemplo:
+
+- `examples/historical-backtest-config.example.json`
+- `examples/historical-signals.example.json`
 
 ## Sync de universo
 
