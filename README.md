@@ -530,6 +530,20 @@ Lectura operativa:
 - `signal-close` puede introducir sesgo si la senal realmente aparecio intraday y se la evalua como si hubieras entrado al cierre de ese mismo dia.
 - los retornos `5/10/20/30d`, el `peakReturnPct`, el `maxDrawdownPct` y `daysToPeak` se miden desde `entryDate`, no desde `signalDate`.
 
+## Partial horizons / senales recientes
+
+WALY no inventa datos futuros. Si una senal reciente todavia no tiene suficientes ruedas para completar `20d` o `30d`, el backtest ahora la marca como `partial` en vez de tratarla como fallo duro.
+
+Reglas practicas:
+
+- si falta el archivo CSV completo, sigue siendo `error`
+- si el CSV existe y permite resolver `entryDate` mas al menos un horizonte posterior, la senal queda `partial`
+- los horizontes no disponibles se guardan como `null` y quedan listados en `missingHorizons`
+- `latestAvailablePriceDate` muestra hasta donde llega el CSV actual
+- `requiredThroughDate` marca hasta donde deberia extenderse el archivo para completar todos los horizontes configurados
+- las metricas por horizonte se calculan solo con senales maduras para ese horizonte
+- por eso una senal reciente puede sumar a `5d` y `10d`, pero quedar fuera de `30d` hasta que exista mas historia local
+
 ## Sync de universo
 
 `node src/cli.js sync-universe` corre una capa de discovery externa y deja todo local:

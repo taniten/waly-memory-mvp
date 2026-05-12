@@ -211,15 +211,25 @@ function formatDateOnly(date) {
   return date.toISOString().slice(0, 10);
 }
 
-function getNextBusinessDate(dateString) {
+function addBusinessDays(dateString, offset) {
   const parts = dateString.split("-").map(Number);
   const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  let remaining = Math.abs(offset);
+  const step = offset >= 0 ? 1 : -1;
 
-  do {
-    date.setUTCDate(date.getUTCDate() + 1);
-  } while (date.getUTCDay() === 0 || date.getUTCDay() === 6);
+  while (remaining > 0) {
+    date.setUTCDate(date.getUTCDate() + step);
+
+    if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) {
+      remaining -= 1;
+    }
+  }
 
   return formatDateOnly(date);
+}
+
+function getNextBusinessDate(dateString) {
+  return addBusinessDays(dateString, 1);
 }
 
 function validateHistoricalSignal(signal, index) {
@@ -618,6 +628,68 @@ function getCloseForDay(series, day) {
   return series.find((item) => item.day === day) || null;
 }
 
+function getReturnFieldName(horizon) {
+  return `return${horizon}d`;
+}
+
+function getRequiredThroughDate(entryDate, horizons) {
+  if (!isNonEmptyString(entryDate) || !Array.isArray(horizons) || !horizons.length) {
+    return null;
+  }
+
+  return addBusinessDays(entryDate, Math.max(...horizons));
+}
+
+function buildHorizonCompletion(evaluationPoints, horizons) {
+  const returnsByHorizon = new Map();
+  const completedHorizons = [];
+  const missingHorizons = [];
+  const peakReturnByHorizon = new Map();
+  const hitTargetsByHorizon = new Map();
+
+  horizons.forEach((horizon) => {
+    const point = getCloseForDay(evaluationPoints, horizon);
+
+    if (point) {
+      completedHorizons.push(horizon);
+      returnsByHorizon.set(horizon, point.returnPct);
+      peakReturnByHorizon.set(
+        horizon,
+        Math.max(...evaluationPoints.filter((item) => item.day <= horizon).map((item) => item.returnPct))
+      );
+    } else {
+      missingHorizons.push(horizon);
+      returnsByHorizon.set(horizon, null);
+      peakReturnByHorizon.set(horizon, null);
+    }
+  });
+
+  [...peakReturnByHorizon.entries()].forEach(([horizon, peakReturn]) => {
+    if (!isFiniteNumber(peakReturn)) {
+      hitTargetsByHorizon.set(horizon, {
+        hit10pct: null,
+        hit15pct: null,
+        hit7pct: null
+      });
+      return;
+    }
+
+    hitTargetsByHorizon.set(horizon, {
+      hit10pct: peakReturn >= 10,
+      hit15pct: peakReturn >= 15,
+      hit7pct: peakReturn >= 7
+    });
+  });
+
+  return {
+    completedHorizons,
+    hitTargetsByHorizon,
+    missingHorizons,
+    peakReturnByHorizon,
+    returnsByHorizon
+  };
+}
+
 function resolveEntryFromRows(signal, rows, config) {
   const policy = config.entryPricePolicy;
   const signalDate = signal.signalDate;
@@ -726,6 +798,7 @@ function buildEvaluationSeries(rows, entryResolution) {
   }
 
   return {
+    latestAvailablePriceDate: rows.length ? rows[rows.length - 1].date : entryResolution.entryDate,
     points,
     startOffset
   };
@@ -742,6 +815,7 @@ function buildLocalCsvSeries(signal, normalizedConfig) {
     entryPriceSource: entryResolution.entryPriceSource,
     entryPriceWarning: entryResolution.entryPriceWarning,
     evaluationPoints: evaluation.points,
+    latestAvailablePriceDate: evaluation.latestAvailablePriceDate,
     priceSource: resolvePriceFilePath(signal, normalizedConfig)
   };
 }
@@ -754,12 +828,7 @@ function computeSignalMetrics(signal, priceSeries, config) {
     : null;
   const peakPoint = priceSeries.evaluationPoints.find((item) => item.returnPct === peakReturnPct) || null;
   const daysToPeak = peakPoint ? peakPoint.day : null;
-  const returnsByHorizon = new Map(
-    config.horizons.map((horizon) => {
-      const point = getCloseForDay(priceSeries.evaluationPoints, horizon);
-      return [horizon, point ? point.returnPct : null];
-    })
-  );
+  const horizonCompletion = buildHorizonCompletion(priceSeries.evaluationPoints, config.horizons);
   const earlyWindow = priceSeries.evaluationPoints
     .filter((item) => item.day > 0 && item.day <= Math.min(5, priceSeries.evaluationPoints.length - 1))
     .map((item) => item.returnPct);
@@ -767,12 +836,40 @@ function computeSignalMetrics(signal, priceSeries, config) {
   const lastConfiguredHorizon = config.horizons.length
     ? config.horizons[config.horizons.length - 1]
     : FIXED_HORIZONS[FIXED_HORIZONS.length - 1];
-  const finalReturn = returnsByHorizon.get(lastConfiguredHorizon);
+  const finalReturn = horizonCompletion.returnsByHorizon.get(lastConfiguredHorizon);
+  const latestAvailablePriceDate =
+    priceSeries.latestAvailablePriceDate ||
+    (priceSeries.evaluationPoints.length
+      ? priceSeries.evaluationPoints[priceSeries.evaluationPoints.length - 1].date
+      : null);
+  const requiredThroughDate = getRequiredThroughDate(priceSeries.entryDate || signal.signalDate, config.horizons);
+  const status = horizonCompletion.missingHorizons.length ? "partial" : "completed";
+  const incompleteReason = status === "partial"
+    ? `Faltan horizontes ${horizonCompletion.missingHorizons.join(", ")}. Latest available: ${latestAvailablePriceDate || "n/d"} | required through: ${requiredThroughDate || "n/d"}.`
+    : null;
+  const maxHorizonHitTargets = horizonCompletion.hitTargetsByHorizon.get(lastConfiguredHorizon) || {
+    hit10pct: null,
+    hit15pct: null,
+    hit7pct: null
+  };
+  const hitTargetsByHorizon = Object.fromEntries(
+    [...horizonCompletion.hitTargetsByHorizon.entries()].map(([horizon, hits]) => [
+      String(horizon),
+      hits
+    ])
+  );
+  const returnFields = Object.fromEntries(
+    config.horizons.map((horizon) => [
+      getReturnFieldName(horizon),
+      horizonCompletion.returnsByHorizon.get(horizon) ?? null
+    ])
+  );
 
   return {
     assetType: signal.assetType,
     catalystType: signal.catalystType || null,
     actualExecutionVerified: signal.actualExecutionVerified,
+    completedHorizons: horizonCompletion.completedHorizons,
     daysToPeak,
     entryDate: priceSeries.entryDate || signal.signalDate,
     entryPrice: priceSeries.entryPrice,
@@ -783,32 +880,45 @@ function computeSignalMetrics(signal, priceSeries, config) {
     failedFast: isFiniteNumber(earlyMinReturn) ? earlyMinReturn <= FAILED_FAST_THRESHOLD_PCT : null,
     falsePositive: isFiniteNumber(peakReturnPct) && peakReturnPct >= 7 && isFiniteNumber(finalReturn)
       ? finalReturn <= 0
-      : false,
-    hit10pct: isFiniteNumber(peakReturnPct) ? peakReturnPct >= 10 : null,
-    hit15pct: isFiniteNumber(peakReturnPct) ? peakReturnPct >= 15 : null,
-    hit7pct: isFiniteNumber(peakReturnPct) ? peakReturnPct >= 7 : null,
+      : null,
+    hit10pct: status === "completed" ? maxHorizonHitTargets.hit10pct : null,
+    hit15pct: status === "completed" ? maxHorizonHitTargets.hit15pct : null,
+    hit7pct: status === "completed" ? maxHorizonHitTargets.hit7pct : null,
+    hitTargetsByHorizon,
+    incompleteReason,
+    latestAvailablePriceDate,
     maxDrawdownPct,
+    missingHorizons: horizonCompletion.missingHorizons,
     notes: signal.notes || "",
     peakReturnPct,
     playbookType: signal.playbookType,
-    return10d: returnsByHorizon.get(10) ?? null,
-    return20d: returnsByHorizon.get(20) ?? null,
-    return30d: returnsByHorizon.get(30) ?? null,
-    return5d: returnsByHorizon.get(5) ?? null,
+    requiredThroughDate,
+    ...returnFields,
     setupRankAtEntry: signal.setupRankAtEntry,
     signalDate: signal.signalDate,
     sourceKind: signal.sourceKind || null,
+    status,
     ticker: signal.ticker
   };
 }
 
-function buildBucketSummary(items) {
-  const completedSignals = items.length;
-  const winsMeasured = items.filter((item) => isFiniteNumber(item.return30d));
-  const wins = winsMeasured.filter((item) => item.return30d > 0).length;
+function buildBucketSummary(items, config) {
+  const lastConfiguredHorizon = config.horizons.length
+    ? config.horizons[config.horizons.length - 1]
+    : FIXED_HORIZONS[FIXED_HORIZONS.length - 1];
+  const lastReturnField = getReturnFieldName(lastConfiguredHorizon);
+  const matureSignals = items.filter((item) => item.completedHorizons.includes(lastConfiguredHorizon));
+  const winsMeasured = matureSignals.filter((item) => isFiniteNumber(item[lastReturnField]));
+  const wins = winsMeasured.filter((item) => item[lastReturnField] > 0).length;
   const hit7Measured = items.filter((item) => typeof item.hit7pct === "boolean");
   const hit10Measured = items.filter((item) => typeof item.hit10pct === "boolean");
   const hit15Measured = items.filter((item) => typeof item.hit15pct === "boolean");
+  const completedByHorizon = Object.fromEntries(
+    config.horizons.map((horizon) => [
+      String(horizon),
+      items.filter((item) => item.completedHorizons.includes(horizon)).length
+    ])
+  );
 
   return {
     avgMaxDrawdown: average(items.map((item) => item.maxDrawdownPct).filter(isFiniteNumber)),
@@ -817,7 +927,8 @@ function buildBucketSummary(items) {
     avgReturn20d: average(items.map((item) => item.return20d).filter(isFiniteNumber)),
     avgReturn30d: average(items.map((item) => item.return30d).filter(isFiniteNumber)),
     avgReturn5d: average(items.map((item) => item.return5d).filter(isFiniteNumber)),
-    completedSignals,
+    completedByHorizon,
+    completedSignals: items.filter((item) => item.status === "completed").length,
     hit10Rate: percentage(
       hit10Measured.filter((item) => item.hit10pct).length,
       hit10Measured.length
@@ -831,11 +942,13 @@ function buildBucketSummary(items) {
       hit7Measured.length
     ),
     medianDaysToPeak: median(items.map((item) => item.daysToPeak).filter(isFiniteNumber)),
+    partialSignals: items.filter((item) => item.status === "partial").length,
+    signalsCount: items.length,
     winRate: percentage(wins, winsMeasured.length)
   };
 }
 
-function buildBreakdown(items, selector, fallback) {
+function buildBreakdown(items, selector, fallback, config) {
   const buckets = new Map();
 
   items.forEach((item) => {
@@ -858,11 +971,15 @@ function buildBreakdown(items, selector, fallback) {
     })
     .map(([key, bucketItems]) => ({
       key,
-      ...buildBucketSummary(bucketItems)
+      ...buildBucketSummary(bucketItems, config)
     }));
 }
 
 function buildSummary(normalizedConfig, processedSignals, errors) {
+  const lastConfiguredHorizon = normalizedConfig.horizons.length
+    ? normalizedConfig.horizons[normalizedConfig.horizons.length - 1]
+    : FIXED_HORIZONS[FIXED_HORIZONS.length - 1];
+  const lastReturnField = getReturnFieldName(lastConfiguredHorizon);
   const entryWarnings = processedSignals
     .filter((item) => isNonEmptyString(item.entryPriceWarning))
     .map((item) => ({
@@ -874,13 +991,41 @@ function buildSummary(normalizedConfig, processedSignals, errors) {
     ? [
         "Este Historical Signal Backtest usa provider local-csv sobre archivos locales.",
         "Si los CSV contienen precios historicos reales, las metricas representan retornos reales medidos ex-post.",
-        "WALY no descarga estos CSV automaticamente; la preparacion de historical_prices sigue siendo manual."
+        "WALY no descarga estos CSV automaticamente; la preparacion de historical_prices sigue siendo manual.",
+        "Las senales recientes pueden quedar partial si todavia no existe cobertura suficiente para todos los horizontes configurados."
       ]
     : [
         "Este Historical Signal Backtest MVP usa provider mock deterministico.",
         "No valida edge real hasta conectarlo con history de precios reales.",
         "Las metricas se calculan solo con trayectoria posterior a signalDate para evitar look-ahead bias en la medicion."
       ];
+  const completedByHorizon = Object.fromEntries(
+    normalizedConfig.horizons.map((horizon) => [
+      String(horizon),
+      processedSignals.filter((item) => item.completedHorizons.includes(horizon)).length
+    ])
+  );
+  const hitRatesByHorizon = Object.fromEntries(
+    normalizedConfig.horizons.map((horizon) => {
+      const matureSignals = processedSignals.filter((item) => item.completedHorizons.includes(horizon));
+      const measured = matureSignals
+        .map((item) => item.hitTargetsByHorizon[String(horizon)] || null)
+        .filter(Boolean);
+
+      return [
+        String(horizon),
+        {
+          completedSignals: matureSignals.length,
+          hit10Rate: percentage(measured.filter((item) => item.hit10pct === true).length, measured.length),
+          hit15Rate: percentage(measured.filter((item) => item.hit15pct === true).length, measured.length),
+          hit7Rate: percentage(measured.filter((item) => item.hit7pct === true).length, measured.length)
+        }
+      ];
+    })
+  );
+  const matureSignalsForFinalHorizon = processedSignals.filter((item) =>
+    item.completedHorizons.includes(lastConfiguredHorizon)
+  );
 
   return {
     allowNetwork: normalizedConfig.allowNetwork,
@@ -891,41 +1036,44 @@ function buildSummary(normalizedConfig, processedSignals, errors) {
     avgReturn30d: average(processedSignals.map((item) => item.return30d).filter(isFiniteNumber)),
     avgReturn5d: average(processedSignals.map((item) => item.return5d).filter(isFiniteNumber)),
     breakdown: {
-      assetType: buildBreakdown(processedSignals, (item) => item.assetType, "unknown"),
-      catalystType: buildBreakdown(processedSignals, (item) => item.catalystType, "none"),
-      playbookType: buildBreakdown(processedSignals, (item) => item.playbookType, "unknown"),
-      setupRankAtEntry: buildBreakdown(processedSignals, (item) => item.setupRankAtEntry, "unknown")
+      assetType: buildBreakdown(processedSignals, (item) => item.assetType, "unknown", normalizedConfig),
+      catalystType: buildBreakdown(processedSignals, (item) => item.catalystType, "none", normalizedConfig),
+      playbookType: buildBreakdown(processedSignals, (item) => item.playbookType, "unknown", normalizedConfig),
+      setupRankAtEntry: buildBreakdown(processedSignals, (item) => item.setupRankAtEntry, "unknown", normalizedConfig)
     },
-    completedSignals: processedSignals.length,
+    completedByHorizon,
+    completedSignals: processedSignals.filter((item) => item.status === "completed").length,
     dataProvider: normalizedConfig.dataProvider,
     dryRun: normalizedConfig.dryRun,
     errorCount: errors.length,
     entryPricePolicy: normalizedConfig.entryPricePolicy,
+    hitRatesByHorizon,
     hit10Rate: percentage(
-      processedSignals.filter((item) => item.hit10pct === true).length,
-      processedSignals.filter((item) => typeof item.hit10pct === "boolean").length
+      matureSignalsForFinalHorizon.filter((item) => item.hit10pct === true).length,
+      matureSignalsForFinalHorizon.filter((item) => typeof item.hit10pct === "boolean").length
     ),
     hit15Rate: percentage(
-      processedSignals.filter((item) => item.hit15pct === true).length,
-      processedSignals.filter((item) => typeof item.hit15pct === "boolean").length
+      matureSignalsForFinalHorizon.filter((item) => item.hit15pct === true).length,
+      matureSignalsForFinalHorizon.filter((item) => typeof item.hit15pct === "boolean").length
     ),
     hit7Rate: percentage(
-      processedSignals.filter((item) => item.hit7pct === true).length,
-      processedSignals.filter((item) => typeof item.hit7pct === "boolean").length
+      matureSignalsForFinalHorizon.filter((item) => item.hit7pct === true).length,
+      matureSignalsForFinalHorizon.filter((item) => typeof item.hit7pct === "boolean").length
     ),
     hitTargetsPct: normalizedConfig.hitTargetsPct,
     horizons: normalizedConfig.horizons,
     maxSignals: normalizedConfig.maxSignals || null,
     medianDaysToPeak: median(processedSignals.map((item) => item.daysToPeak).filter(isFiniteNumber)),
     notes,
+    partialSignals: processedSignals.filter((item) => item.status === "partial").length,
     runId: normalizedConfig.runId,
     signalsFile: normalizedConfig.signalsFile,
     totalSignals: normalizedConfig.totalSignals,
     warningCount: entryWarnings.length,
     warnings: entryWarnings,
     winRate: percentage(
-      processedSignals.filter((item) => isFiniteNumber(item.return30d) && item.return30d > 0).length,
-      processedSignals.filter((item) => isFiniteNumber(item.return30d)).length
+      matureSignalsForFinalHorizon.filter((item) => isFiniteNumber(item[lastReturnField]) && item[lastReturnField] > 0).length,
+      matureSignalsForFinalHorizon.filter((item) => isFiniteNumber(item[lastReturnField])).length
     )
   };
 }
@@ -940,7 +1088,7 @@ function renderBreakdownTable(items) {
     "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
   ];
   const rows = items.map((item) =>
-    `| ${item.key} | ${item.completedSignals} | ${formatPercent(item.winRate)} | ${formatPercent(item.hit7Rate)} | ${formatPercent(item.hit10Rate)} | ${formatPercent(item.hit15Rate)} | ${formatPercent(item.avgReturn5d)} | ${formatPercent(item.avgReturn10d)} | ${formatPercent(item.avgReturn20d)} | ${formatPercent(item.avgReturn30d)} | ${formatPercent(item.avgPeakReturn)} | ${formatPercent(item.avgMaxDrawdown)} | ${item.medianDaysToPeak === null ? "n/d" : item.medianDaysToPeak} |`
+    `| ${item.key} | ${item.signalsCount} | ${formatPercent(item.winRate)} | ${formatPercent(item.hit7Rate)} | ${formatPercent(item.hit10Rate)} | ${formatPercent(item.hit15Rate)} | ${formatPercent(item.avgReturn5d)} | ${formatPercent(item.avgReturn10d)} | ${formatPercent(item.avgReturn20d)} | ${formatPercent(item.avgReturn30d)} | ${formatPercent(item.avgPeakReturn)} | ${formatPercent(item.avgMaxDrawdown)} | ${item.medianDaysToPeak === null ? "n/d" : item.medianDaysToPeak} |`
   );
 
   return [...header, ...rows].join("\n");
@@ -965,6 +1113,7 @@ function renderSummaryMarkdown(summary, errors) {
     `- signalsFile: \`${summary.signalsFile}\``,
     `- totalSignals: ${summary.totalSignals}`,
     `- completedSignals: ${summary.completedSignals}`,
+    `- partialSignals: ${summary.partialSignals}`,
     `- errorCount: ${summary.errorCount}`,
     `- warningCount: ${summary.warningCount}`,
     "",
@@ -980,6 +1129,15 @@ function renderSummaryMarkdown(summary, errors) {
     `- avgPeakReturn: ${formatPercent(summary.avgPeakReturn)}`,
     `- avgMaxDrawdown: ${formatPercent(summary.avgMaxDrawdown)}`,
     `- medianDaysToPeak: ${summary.medianDaysToPeak === null ? "n/d" : summary.medianDaysToPeak}`,
+    "",
+    "## Completed By Horizon",
+    ...Object.entries(summary.completedByHorizon).map(([horizon, count]) => `- ${horizon}d: ${count}`),
+    "",
+    "## Hit Rates By Horizon",
+    ...Object.entries(summary.hitRatesByHorizon).map(
+      ([horizon, metrics]) =>
+        `- ${horizon}d: completed=${metrics.completedSignals} | hit7=${formatPercent(metrics.hit7Rate)} | hit10=${formatPercent(metrics.hit10Rate)} | hit15=${formatPercent(metrics.hit15Rate)}`
+    ),
     "",
     "## Breakdown: assetType",
     renderBreakdownTable(summary.breakdown.assetType),
@@ -1098,6 +1256,12 @@ function processSignal(signal, normalizedConfig) {
     const priceSeries = buildLocalCsvSeries(signal, normalizedConfig);
     const metrics = computeSignalMetrics(signal, priceSeries, normalizedConfig);
 
+    if (!metrics.completedHorizons.length) {
+      throw new Error(
+        `CSV historico insuficiente para ${signal.ticker}: no completa ningun horizonte configurado. Latest available: ${metrics.latestAvailablePriceDate || "n/d"} | required through: ${metrics.requiredThroughDate || "n/d"}.`
+      );
+    }
+
     return {
       ...metrics,
       priceSource: priceSeries.priceSource,
@@ -1175,8 +1339,11 @@ function runHistoricalBacktest(configPathInput) {
     } catch (error) {
       errors.push({
         index,
+        incompleteReason: error.message,
         message: error.message,
+        missingHorizons: normalizedConfig.horizons,
         signalDate: signal && signal.signalDate ? signal.signalDate : null,
+        status: "error",
         ticker: signal && signal.ticker ? signal.ticker : null
       });
     }

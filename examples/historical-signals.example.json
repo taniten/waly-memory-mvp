@@ -23,16 +23,15 @@
       "notes": "Ejemplo sin entryPrice: con policy next-open debe entrar al open del primer dia posterior."
     },
     {
-      "ticker": "IPX",
-      "signalDate": "2026-04-09",
+      "ticker": "AXSM",
+      "signalDate": "2026-05-19",
       "assetType": "equity",
       "playbookType": "event-swing",
       "setupRankAtEntry": "B",
-      "entryPrice": 35.7,
       "actualExecutionVerified": false,
-      "entryPriceNote": "Precio manual no verificado; con policy next-open debe generar warning porque sera ignorado.",
+      "entryPriceNote": "Senal reciente ficticia para mostrar un caso partial cuando el CSV todavia no cubre todos los horizontes.",
       "sourceKind": "opportunity",
-      "notes": "Ejemplo con entryPrice provisto pero sin ejecucion real verificada para mostrar warning de policy."
+      "notes": "Ejemplo reciente que deberia quedar partial con latestAvailablePriceDate y missingHorizons si el CSV no llega a 30d."
     },
     {
       "ticker": "VKTX",
@@ -45,6 +44,18 @@
       "actualExecutionVerified": true,
       "sourceKind": "watchlist",
       "notes": "Queda como ejemplo adicional fuera del dry-run de 3 senales."
+    },
+    {
+      "ticker": "IPX",
+      "signalDate": "2026-04-09",
+      "assetType": "equity",
+      "playbookType": "event-swing",
+      "setupRankAtEntry": "B",
+      "entryPrice": 35.7,
+      "actualExecutionVerified": false,
+      "entryPriceNote": "Precio manual no verificado; con policy next-open debe generar warning porque sera ignorado.",
+      "sourceKind": "opportunity",
+      "notes": "Ejemplo con entryPrice provisto pero sin ejecucion real verificada para mostrar warning de policy."
     }
   ]
 }
