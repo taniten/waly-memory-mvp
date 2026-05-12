@@ -563,16 +563,23 @@ Lectura operativa:
 
 ## Partial horizons / senales recientes
 
-WALY no inventa datos futuros. Si una senal reciente todavia no tiene suficientes ruedas para completar `20d` o `30d`, el backtest ahora la marca como `partial` en vez de tratarla como fallo duro.
+WALY no inventa datos futuros. Si una senal reciente todavia no tiene suficientes ruedas para completar todos los horizontes, el backtest separa madurez de error real.
 
 Reglas practicas:
 
 - si falta el archivo CSV completo, sigue siendo `error`
-- si el CSV existe y permite resolver `entryDate` mas al menos un horizonte posterior, la senal queda `partial`
+- `completed`: todos los horizontes configurados estan disponibles
+- `partial`: el CSV existe, hay `entryDate` y al menos un horizonte posterior esta disponible, pero no todos
+- `pending`: el CSV existe y hay `entryDate`, pero la senal es tan reciente que no completa ningun horizonte todavia
+- `error`: falta CSV, el CSV es invalido, falta `entryDate`, hay datos corruptos o hay un problema real de lectura/validacion
+- `pending` no es fallo ni falso negativo; solo significa que la senal todavia no tiene horizonte observable
 - los horizontes no disponibles se guardan como `null` y quedan listados en `missingHorizons`
+- `pendingReason` explica por que una senal quedo pendiente
+- `earliestNextHorizonDate` muestra la primera fecha aproximada en que podria madurar un horizonte
 - `latestAvailablePriceDate` muestra hasta donde llega el CSV actual
 - `requiredThroughDate` marca hasta donde deberia extenderse el archivo para completar todos los horizontes configurados
-- las metricas por horizonte se calculan solo con senales maduras para ese horizonte
+- las metricas por horizonte se calculan solo con senales que ya tienen ese horizonte disponible
+- `pending` queda fuera de las metricas de performance hasta que madure
 - por eso una senal reciente puede sumar a `5d` y `10d`, pero quedar fuera de `30d` hasta que exista mas historia local
 
 ## Sync de universo

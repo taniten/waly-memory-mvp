@@ -662,6 +662,14 @@ function getRequiredThroughDate(entryDate, horizons) {
   return addBusinessDays(entryDate, Math.max(...horizons));
 }
 
+function getEarliestNextHorizonDate(entryDate, missingHorizons) {
+  if (!isNonEmptyString(entryDate) || !Array.isArray(missingHorizons) || !missingHorizons.length) {
+    return null;
+  }
+
+  return addBusinessDays(entryDate, Math.min(...missingHorizons));
+}
+
 function buildHorizonCompletion(evaluationPoints, horizons) {
   const returnsByHorizon = new Map();
   const completedHorizons = [];
@@ -933,18 +941,7 @@ function buildPriceCoverageItem(signal, normalizedConfig) {
 }
 
 function computeSignalMetrics(signal, priceSeries, config) {
-  const allReturns = priceSeries.evaluationPoints.map((item) => item.returnPct);
-  const peakReturnPct = allReturns.length ? Math.max(...allReturns) : null;
-  const maxDrawdownPct = allReturns.length
-    ? Math.min(0, Math.min(...allReturns))
-    : null;
-  const peakPoint = priceSeries.evaluationPoints.find((item) => item.returnPct === peakReturnPct) || null;
-  const daysToPeak = peakPoint ? peakPoint.day : null;
   const horizonCompletion = buildHorizonCompletion(priceSeries.evaluationPoints, config.horizons);
-  const earlyWindow = priceSeries.evaluationPoints
-    .filter((item) => item.day > 0 && item.day <= Math.min(5, priceSeries.evaluationPoints.length - 1))
-    .map((item) => item.returnPct);
-  const earlyMinReturn = earlyWindow.length ? Math.min(...earlyWindow) : null;
   const lastConfiguredHorizon = config.horizons.length
     ? config.horizons[config.horizons.length - 1]
     : FIXED_HORIZONS[FIXED_HORIZONS.length - 1];
@@ -955,10 +952,37 @@ function computeSignalMetrics(signal, priceSeries, config) {
       ? priceSeries.evaluationPoints[priceSeries.evaluationPoints.length - 1].date
       : null);
   const requiredThroughDate = getRequiredThroughDate(priceSeries.entryDate || signal.signalDate, config.horizons);
-  const status = horizonCompletion.missingHorizons.length ? "partial" : "completed";
+  const earliestNextHorizonDate = getEarliestNextHorizonDate(
+    priceSeries.entryDate || signal.signalDate,
+    horizonCompletion.missingHorizons
+  );
+  const hasCompletedHorizons = horizonCompletion.completedHorizons.length > 0;
+  const status = !horizonCompletion.missingHorizons.length
+    ? "completed"
+    : hasCompletedHorizons
+      ? "partial"
+      : "pending";
+  const allReturns = hasCompletedHorizons
+    ? priceSeries.evaluationPoints.map((item) => item.returnPct)
+    : [];
+  const peakReturnPct = allReturns.length ? Math.max(...allReturns) : null;
+  const maxDrawdownPct = allReturns.length
+    ? Math.min(0, Math.min(...allReturns))
+    : null;
+  const peakPoint = priceSeries.evaluationPoints.find((item) => item.returnPct === peakReturnPct) || null;
+  const daysToPeak = peakPoint ? peakPoint.day : null;
+  const earlyWindow = hasCompletedHorizons
+    ? priceSeries.evaluationPoints
+      .filter((item) => item.day > 0 && item.day <= Math.min(5, priceSeries.evaluationPoints.length - 1))
+      .map((item) => item.returnPct)
+    : [];
+  const earlyMinReturn = earlyWindow.length ? Math.min(...earlyWindow) : null;
+  const pendingReason = status === "pending"
+    ? `Senal pendiente: CSV y entryDate validos, pero todavia no completa ningun horizonte configurado. Latest available: ${latestAvailablePriceDate || "n/d"} | earliest next horizon: ${earliestNextHorizonDate || "n/d"} | required through: ${requiredThroughDate || "n/d"}.`
+    : null;
   const incompleteReason = status === "partial"
     ? `Faltan horizontes ${horizonCompletion.missingHorizons.join(", ")}. Latest available: ${latestAvailablePriceDate || "n/d"} | required through: ${requiredThroughDate || "n/d"}.`
-    : null;
+    : pendingReason;
   const maxHorizonHitTargets = horizonCompletion.hitTargetsByHorizon.get(lastConfiguredHorizon) || {
     hit10pct: null,
     hit15pct: null,
@@ -989,6 +1013,7 @@ function computeSignalMetrics(signal, priceSeries, config) {
     entryPricePolicy: config.entryPricePolicy,
     entryPriceSource: priceSeries.entryPriceSource,
     entryPriceWarning: priceSeries.entryPriceWarning || null,
+    earliestNextHorizonDate,
     failedFast: isFiniteNumber(earlyMinReturn) ? earlyMinReturn <= FAILED_FAST_THRESHOLD_PCT : null,
     falsePositive: isFiniteNumber(peakReturnPct) && peakReturnPct >= 7 && isFiniteNumber(finalReturn)
       ? finalReturn <= 0
@@ -1002,6 +1027,7 @@ function computeSignalMetrics(signal, priceSeries, config) {
     maxDrawdownPct,
     missingHorizons: horizonCompletion.missingHorizons,
     notes: signal.notes || "",
+    pendingReason,
     peakReturnPct,
     playbookType: signal.playbookType,
     requiredThroughDate,
@@ -1055,6 +1081,8 @@ function buildBucketSummary(items, config) {
     ),
     medianDaysToPeak: median(items.map((item) => item.daysToPeak).filter(isFiniteNumber)),
     partialSignals: items.filter((item) => item.status === "partial").length,
+    pendingCount: items.filter((item) => item.status === "pending").length,
+    pendingSignals: items.filter((item) => item.status === "pending").length,
     signalsCount: items.length,
     winRate: percentage(wins, winsMeasured.length)
   };
@@ -1092,6 +1120,7 @@ function buildSummary(normalizedConfig, processedSignals, errors) {
     ? normalizedConfig.horizons[normalizedConfig.horizons.length - 1]
     : FIXED_HORIZONS[FIXED_HORIZONS.length - 1];
   const lastReturnField = getReturnFieldName(lastConfiguredHorizon);
+  const pendingItems = processedSignals.filter((item) => item.status === "pending");
   const entryWarnings = processedSignals
     .filter((item) => isNonEmptyString(item.entryPriceWarning))
     .map((item) => ({
@@ -1104,7 +1133,8 @@ function buildSummary(normalizedConfig, processedSignals, errors) {
         "Este Historical Signal Backtest usa provider local-csv sobre archivos locales.",
         "Si los CSV contienen precios historicos reales, las metricas representan retornos reales medidos ex-post.",
         "WALY no descarga estos CSV automaticamente; la preparacion de historical_prices sigue siendo manual.",
-        "Las senales recientes pueden quedar partial si todavia no existe cobertura suficiente para todos los horizontes configurados."
+        "Las senales recientes pueden quedar partial o pending si todavia no existe cobertura suficiente para todos los horizontes configurados.",
+        "pending no es fallo: significa que existe CSV y entryDate, pero no hay ningun horizonte observable todavia."
       ]
     : [
         "Este Historical Signal Backtest MVP usa provider mock deterministico.",
@@ -1178,6 +1208,15 @@ function buildSummary(normalizedConfig, processedSignals, errors) {
     medianDaysToPeak: median(processedSignals.map((item) => item.daysToPeak).filter(isFiniteNumber)),
     notes,
     partialSignals: processedSignals.filter((item) => item.status === "partial").length,
+    pendingCount: pendingItems.length,
+    pendingDetails: pendingItems.map((item) => ({
+      earliestNextHorizonDate: item.earliestNextHorizonDate,
+      pendingReason: item.pendingReason,
+      requiredThroughDate: item.requiredThroughDate,
+      ticker: item.ticker
+    })),
+    pendingSignals: pendingItems.length,
+    pendingTickers: pendingItems.map((item) => item.ticker),
     runId: normalizedConfig.runId,
     signalsFile: normalizedConfig.signalsFile,
     totalSignals: normalizedConfig.totalSignals,
@@ -1226,6 +1265,7 @@ function renderSummaryMarkdown(summary, errors) {
     `- totalSignals: ${summary.totalSignals}`,
     `- completedSignals: ${summary.completedSignals}`,
     `- partialSignals: ${summary.partialSignals}`,
+    `- pendingSignals: ${summary.pendingSignals}`,
     `- errorCount: ${summary.errorCount}`,
     `- warningCount: ${summary.warningCount}`,
     "",
@@ -1270,6 +1310,11 @@ function renderSummaryMarkdown(summary, errors) {
     ...(summary.warnings.length
       ? summary.warnings.map((warning) => `- ${warning.ticker} | ${warning.entryPricePolicy} | ${warning.entryPriceWarning}`)
       : ["- Sin warnings."]),
+    "",
+    "## Pending",
+    ...(summary.pendingDetails.length
+      ? summary.pendingDetails.map((item) => `- ${item.ticker} | earliestNextHorizonDate=${item.earliestNextHorizonDate || "n/d"} | ${item.pendingReason}`)
+      : ["- Sin pending."]),
     "",
     "## Errors",
     ...(errors.length
@@ -1367,12 +1412,6 @@ function processSignal(signal, normalizedConfig) {
   if (normalizedConfig.dataProvider === "local-csv") {
     const priceSeries = buildLocalCsvSeries(signal, normalizedConfig);
     const metrics = computeSignalMetrics(signal, priceSeries, normalizedConfig);
-
-    if (!metrics.completedHorizons.length) {
-      throw new Error(
-        `CSV historico insuficiente para ${signal.ticker}: no completa ningun horizonte configurado. Latest available: ${metrics.latestAvailablePriceDate || "n/d"} | required through: ${metrics.requiredThroughDate || "n/d"}.`
-      );
-    }
 
     return {
       ...metrics,

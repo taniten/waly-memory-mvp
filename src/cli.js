@@ -221,7 +221,10 @@ async function main() {
         console.log(`Signals output: ${result.signalsPath}`);
         console.log(`Summary JSON: ${result.summaryJsonPath}`);
         console.log(`Summary MD: ${result.summaryMarkdownPath}`);
-        console.log(`Signals procesadas: ${result.summary.completedSignals}/${result.summary.totalSignals}`);
+        console.log(`Total signals: ${result.summary.totalSignals}`);
+        console.log(`Completed: ${result.summary.completedSignals}`);
+        console.log(`Partial: ${result.summary.partialSignals}`);
+        console.log(`Pending: ${result.summary.pendingSignals}`);
         console.log(`Errores: ${result.summary.errorCount}`);
         break;
       }
