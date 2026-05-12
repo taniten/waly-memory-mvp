@@ -10,6 +10,7 @@
     "report": "node src/cli.js report",
     "backtest": "node src/cli.js backtest",
     "historical-backtest": "node src/cli.js historical-backtest",
+    "price-coverage": "node src/cli.js price-coverage",
     "sync-universe": "node src/cli.js sync-universe",
     "log": "node src/cli.js add-log",
     "outcome": "node src/cli.js add-outcome",

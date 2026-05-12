@@ -488,10 +488,32 @@ function buildRunPaths(normalizedConfig) {
 
   return {
     checkpointPath: path.join(runDir, "checkpoint.json"),
+    priceCoveragePath: path.join(runDir, "price-coverage.json"),
     runDir,
     signalsPath: path.join(runDir, "signals.json"),
     summaryJsonPath: path.join(runDir, "summary.json"),
     summaryMarkdownPath: path.join(runDir, "summary.md")
+  };
+}
+
+function formatIntegerList(values) {
+  return values.length ? values.join(", ") : "none";
+}
+
+function isCsvValidationError(error) {
+  return (
+    error.message.startsWith("CSV historico vacio o incompleto:") ||
+    error.message.startsWith("Falta columna ") ||
+    error.message.startsWith("Fila CSV invalida en ") ||
+    error.message.startsWith("Fecha invalida en ") ||
+    error.message.startsWith("Numero invalido en ")
+  );
+}
+
+function getConservativeCoverageRange(signalDate) {
+  return {
+    requiredEndDate: addBusinessDays(signalDate, 45),
+    requiredStartDate: addBusinessDays(signalDate, -10)
   };
 }
 
@@ -817,6 +839,96 @@ function buildLocalCsvSeries(signal, normalizedConfig) {
     evaluationPoints: evaluation.points,
     latestAvailablePriceDate: evaluation.latestAvailablePriceDate,
     priceSource: resolvePriceFilePath(signal, normalizedConfig)
+  };
+}
+
+function buildPriceCoverageItem(signal, normalizedConfig) {
+  const priceFilePath = resolvePriceFilePath(signal, normalizedConfig);
+  const conservativeRange = getConservativeCoverageRange(signal.signalDate);
+  const baseItem = {
+    columnsValid: false,
+    completedHorizons: [],
+    csvExists: fs.existsSync(priceFilePath),
+    entryDate: null,
+    entryPricePolicy: normalizedConfig.entryPricePolicy,
+    firstCsvDate: null,
+    hasEntryDate: false,
+    lastCsvDate: null,
+    missingHorizons: [...normalizedConfig.horizons],
+    priceFilePath,
+    requiredEndDate: conservativeRange.requiredEndDate,
+    requiredStartDate: conservativeRange.requiredStartDate,
+    requiredThroughDate: null,
+    signalDate: signal.signalDate,
+    status: "missing_csv",
+    ticker: signal.ticker,
+    validationMessage: `No existe CSV historico: ${priceFilePath}.`
+  };
+
+  if (!baseItem.csvExists) {
+    return baseItem;
+  }
+
+  let rows;
+
+  try {
+    rows = loadLocalCsvRows(priceFilePath);
+  } catch (error) {
+    return {
+      ...baseItem,
+      status: isCsvValidationError(error) ? "invalid_csv" : "insufficient_data",
+      validationMessage: error.message
+    };
+  }
+
+  const itemWithRows = {
+    ...baseItem,
+    columnsValid: true,
+    firstCsvDate: rows.length ? rows[0].date : null,
+    lastCsvDate: rows.length ? rows[rows.length - 1].date : null
+  };
+
+  let entryResolution;
+
+  try {
+    entryResolution = resolveEntryFromRows(signal, rows, normalizedConfig);
+  } catch (error) {
+    return {
+      ...itemWithRows,
+      requiredThroughDate: getRequiredThroughDate(signal.signalDate, normalizedConfig.horizons),
+      status: "insufficient_data",
+      validationMessage: error.message
+    };
+  }
+
+  const evaluation = buildEvaluationSeries(rows, entryResolution);
+  const horizonCompletion = buildHorizonCompletion(evaluation.points, normalizedConfig.horizons);
+  const requiredThroughDate = getRequiredThroughDate(entryResolution.entryDate, normalizedConfig.horizons);
+  let status = "ready";
+  let validationMessage = "Cobertura completa para todos los horizontes configurados.";
+
+  if (!horizonCompletion.completedHorizons.length) {
+    status = "insufficient_data";
+    validationMessage =
+      `CSV historico insuficiente para ${signal.ticker}: no completa ningun horizonte configurado. ` +
+      `Latest available: ${evaluation.latestAvailablePriceDate || "n/d"} | required through: ${requiredThroughDate || "n/d"}.`;
+  } else if (horizonCompletion.missingHorizons.length) {
+    status = "partial";
+    validationMessage =
+      `Faltan horizontes ${horizonCompletion.missingHorizons.join(", ")}. ` +
+      `Latest available: ${evaluation.latestAvailablePriceDate || "n/d"} | required through: ${requiredThroughDate || "n/d"}.`;
+  }
+
+  return {
+    ...itemWithRows,
+    completedHorizons: horizonCompletion.completedHorizons,
+    entryDate: entryResolution.entryDate,
+    hasEntryDate: true,
+    latestAvailablePriceDate: evaluation.latestAvailablePriceDate,
+    missingHorizons: horizonCompletion.missingHorizons,
+    requiredThroughDate,
+    status,
+    validationMessage
   };
 }
 
@@ -1302,6 +1414,116 @@ function writeOutputs(runPaths, payload) {
   writeCheckpoint(runPaths.checkpointPath, payload.checkpoint);
 }
 
+function buildPriceCoverageSummary(items, normalizedConfig, allSignalsCount) {
+  const groups = {
+    insufficient_data: [],
+    invalid_csv: [],
+    missing_csv: [],
+    partial: [],
+    ready: []
+  };
+
+  items.forEach((item) => {
+    groups[item.status].push(item.ticker);
+  });
+
+  return {
+    allSignalsCount,
+    entryPricePolicy: normalizedConfig.entryPricePolicy,
+    horizons: normalizedConfig.horizons,
+    invalidCsvCount: groups.invalid_csv.length,
+    invalidCsvTickers: groups.invalid_csv,
+    insufficientDataCount: groups.insufficient_data.length,
+    insufficientDataTickers: groups.insufficient_data,
+    missingCsvCount: groups.missing_csv.length,
+    missingCsvTickers: groups.missing_csv,
+    partialCount: groups.partial.length,
+    partialTickers: groups.partial,
+    readyCount: groups.ready.length,
+    readyTickers: groups.ready,
+    runId: normalizedConfig.runId,
+    selectedSignalsCount: items.length,
+    totalSignals: items.length
+  };
+}
+
+function renderPriceCoverageConsole(report) {
+  const summary = report.summary;
+  const lines = [
+    `# Price Coverage Check - ${summary.runId}`,
+    "",
+    `- signalsFile: ${report.signalsFile}`,
+    `- historicalPricesDir: ${report.historicalPricesDir}`,
+    `- entryPricePolicy: ${summary.entryPricePolicy}`,
+    `- horizons: ${summary.horizons.join(", ")}`,
+    `- selectedSignals: ${summary.selectedSignalsCount}/${summary.allSignalsCount}`,
+    "- required range uses weekdays approximation: 10 ruedas habiles antes y 45 despues de signalDate.",
+    "",
+    "## Status summary",
+    `- ready: ${summary.readyCount} | ${summary.readyTickers.length ? summary.readyTickers.join(", ") : "none"}`,
+    `- partial: ${summary.partialCount} | ${summary.partialTickers.length ? summary.partialTickers.join(", ") : "none"}`,
+    `- missing_csv: ${summary.missingCsvCount} | ${summary.missingCsvTickers.length ? summary.missingCsvTickers.join(", ") : "none"}`,
+    `- invalid_csv: ${summary.invalidCsvCount} | ${summary.invalidCsvTickers.length ? summary.invalidCsvTickers.join(", ") : "none"}`,
+    `- insufficient_data: ${summary.insufficientDataCount} | ${summary.insufficientDataTickers.length ? summary.insufficientDataTickers.join(", ") : "none"}`,
+    "",
+    "## Signals"
+  ];
+
+  report.signals.forEach((item) => {
+    lines.push(
+      `- ${item.ticker} | ${item.status} | signalDate ${item.signalDate} | policy ${item.entryPricePolicy} | csv ${item.csvExists ? "yes" : "no"} | columns ${item.columnsValid ? "yes" : "no"} | first ${item.firstCsvDate || "n/d"} | last ${item.lastCsvDate || "n/d"} | required ${item.requiredStartDate}..${item.requiredEndDate} | hasEntryDate ${item.hasEntryDate ? "yes" : "no"} | completed ${formatIntegerList(item.completedHorizons)} | missing ${formatIntegerList(item.missingHorizons)}`
+    );
+
+    if (item.validationMessage) {
+      lines.push(`  note: ${item.validationMessage}`);
+    }
+  });
+
+  return lines.join("\n");
+}
+
+function runPriceCoverage(configPathInput) {
+  const configPath = resolveConfigPath(configPathInput);
+  const config = readJsonFile(configPath);
+
+  validateConfig(config);
+
+  const normalizedConfig = normalizeConfig(config, configPath);
+
+  if (normalizedConfig.dataProvider !== "local-csv") {
+    throw new Error("price-coverage solo soporta configs con dataProvider=local-csv.");
+  }
+
+  const runPaths = buildRunPaths(normalizedConfig);
+  const allSignals = loadSignals(normalizedConfig.signalsPath);
+  const selectedSignals = selectSignals(allSignals, normalizedConfig);
+  const signals = selectedSignals.map((signal) => buildPriceCoverageItem(signal, normalizedConfig));
+  const summary = buildPriceCoverageSummary(signals, normalizedConfig, allSignals.length);
+  const generatedAt = new Date().toISOString();
+  const payload = {
+    dataProvider: normalizedConfig.dataProvider,
+    entryPricePolicy: normalizedConfig.entryPricePolicy,
+    generatedAt,
+    historicalPricesDir: normalizedConfig.historicalPricesDir,
+    horizons: normalizedConfig.horizons,
+    runId: normalizedConfig.runId,
+    signals,
+    signalsFile: normalizedConfig.signalsFile,
+    summary
+  };
+
+  fs.mkdirSync(runPaths.runDir, { recursive: true });
+  writeJsonAtomic(runPaths.priceCoveragePath, payload);
+
+  return {
+    consoleReport: renderPriceCoverageConsole(payload),
+    coveragePath: runPaths.priceCoveragePath,
+    runDir: runPaths.runDir,
+    signals,
+    summary
+  };
+}
+
 function runHistoricalBacktest(configPathInput) {
   const configPath = resolveConfigPath(configPathInput);
   const config = readJsonFile(configPath);
@@ -1408,5 +1630,6 @@ function runHistoricalBacktest(configPathInput) {
 }
 
 module.exports = {
-  runHistoricalBacktest
+  runHistoricalBacktest,
+  runPriceCoverage
 };

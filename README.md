@@ -514,6 +514,37 @@ Reglas de uso:
 - esto si permite medir retornos reales si el contenido del CSV es historico real
 - WALY todavia no descarga history automaticamente ni usa APIs en esta fase
 
+## Price coverage check
+
+Antes de correr un backtest real con `dataProvider="local-csv"`, conviene validar cobertura y calidad basica de `historical_prices/*.csv`:
+
+```bash
+node src/cli.js price-coverage <config-json>
+```
+
+Tambien podes usar:
+
+```bash
+npm run price-coverage -- <config-json>
+```
+
+Este chequeo:
+
+- lee la misma config de `historical-backtest`
+- valida `signalsFile`, `historicalPricesDir`, `horizons` y `entryPricePolicy`
+- revisa por senal si el CSV existe, si las columnas requeridas son validas y hasta donde llega la historia local
+- estima un rango conservador usando `10` ruedas habiles antes y `45` despues de `signalDate`
+- marca cada ticker como `ready`, `partial`, `missing_csv`, `invalid_csv` o `insufficient_data`
+- escribe `backtests/<runId>/price-coverage.json` para dejar trazabilidad local sin tocar `data/`
+
+Lectura practica:
+
+- usa este paso antes del backtest cuando el dataset mezcla senales viejas y recientes
+- `ready` significa que la senal puede completar todos los horizontes configurados
+- `partial` significa que el CSV existe y permite medir algunos horizontes, pero no todos
+- `missing_csv` o `invalid_csv` te frenan antes de correr una medicion enganosa
+- `insufficient_data` suele indicar que el archivo existe pero no permite resolver `entryDate` o no completa ni el primer horizonte
+
 ## Entry price policy
 
 `historical-backtest` acepta `entryPricePolicy` para definir una regla explicita y auditable de entrada:
