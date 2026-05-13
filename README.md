@@ -142,6 +142,7 @@ node src/cli.js state
 node src/cli.js report
 node src/cli.js backtest
 node src/cli.js historical-backtest ./examples/historical-backtest-config.example.json
+node src/cli.js live-scan ./examples/live-scan-config.example.json
 node src/cli.js sync-universe
 node src/cli.js add-log ./examples/nueva-revision.example.json
 node src/cli.js add-outcome ./examples/nuevo-outcome.example.json
@@ -157,6 +158,7 @@ npm run state
 npm run report
 npm run backtest
 npm run historical-backtest -- ./examples/historical-backtest-config.example.json
+npm run live-scan -- ./examples/live-scan-config.example.json
 npm run sync-universe
 npm run log -- ./examples/nueva-revision.example.json
 npm run outcome -- ./examples/nuevo-outcome.example.json
@@ -422,6 +424,29 @@ Hace universe seeding con APIs opcionales:
 - cambios desde la ultima revision
 - alertas y conflictos
 - decision final brutal y clara
+
+## Live Universe Scan
+
+`node src/cli.js live-scan <config-json>` corre un scanner read-only y escribe solo dentro de `backtests/live-universe-scan/`.
+
+Reglas practicas del provider Yahoo en esta fase:
+
+- Yahoo Finance chart endpoint puede devolver `HTTP 429` si lo consultas demasiado rapido.
+- WALY aplica `yahooRequestDelayMs` entre tickers para no martillar el endpoint.
+- Si hay `429`, WALY reintenta con backoff lineal usando `yahooRetryBaseDelayMs * intento` hasta `yahooMaxRetries`.
+- Si una respuesta Yahoo ya fue normalizada hace poco, WALY puede reutilizar cache local en `backtests/live-universe-scan/cache/yahoo/`.
+- `yahooCacheTtlMinutes` define cuan fresca debe estar esa cache para seguir contandola como util.
+- Si `useLocalCsvFallback=true` y Yahoo falla, WALY puede leer la ultima vela disponible desde `historical_prices/TICKER.csv`.
+- El fallback local siempre queda marcado como `local-csv-fallback`; no cuenta como live real y nunca habilita `A+`.
+- El scanner deja trazabilidad en `sourceStatus.json` con tickers live, cache, fallback, rate-limited y failed.
+
+Campos nuevos de config para live-scan:
+
+- `yahooRequestDelayMs`
+- `yahooMaxRetries`
+- `yahooRetryBaseDelayMs`
+- `yahooCacheTtlMinutes`
+- `useLocalCsvFallback`
 
 ## Outcome Backtest Summary WALY 2.5
 

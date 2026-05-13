@@ -24,6 +24,12 @@ const DEFAULT_CONFIG = {
   minPrice: 2,
   minRelativeVolume: 1.25,
   outputDir: "backtests/live-universe-scan",
+  seedMode: "local-plus-config",
+  useLocalCsvFallback: false,
+  yahooCacheTtlMinutes: 15,
+  yahooMaxRetries: 2,
+  yahooRequestDelayMs: 2000,
+  yahooRetryBaseDelayMs: 5000,
   sourcesEnabled: {
     earnings: true,
     finviz: false,
@@ -37,7 +43,8 @@ const DEFAULT_CONFIG = {
 };
 
 const ETF_SEEDS = ["SPY", "QQQ", "IWM", "XBI"];
-const LEVEL_1_SOURCES = new Set(["yahoo-chart", "nasdaq", "nasdaq-earnings", "sec", "openfda"]);
+const HISTORICAL_PRICES_DIR = path.resolve(__dirname, "..", "historical_prices");
+const LEVEL_1_SOURCES = new Set(["yahoo-chart", "yahoo-chart-cache", "nasdaq", "nasdaq-earnings", "sec", "openfda"]);
 const LEVEL_2_SOURCES = new Set(["finviz", "openinsider"]);
 
 function readConfig(configPath) {
@@ -47,11 +54,19 @@ function readConfig(configPath) {
 }
 
 function mergeConfig(input = {}) {
+  const seedMode = input.seedMode === "config-only" ? "config-only" : DEFAULT_CONFIG.seedMode;
+
   return {
     ...DEFAULT_CONFIG,
     ...input,
     maxCandidates: Math.min(input.maxCandidates || DEFAULT_CONFIG.maxCandidates, 3),
     maxTickers: Math.min(input.maxTickers || DEFAULT_CONFIG.maxTickers, 50),
+    seedMode,
+    useLocalCsvFallback: input.useLocalCsvFallback === true,
+    yahooCacheTtlMinutes: normalizeNonNegativeInteger(input.yahooCacheTtlMinutes, DEFAULT_CONFIG.yahooCacheTtlMinutes),
+    yahooMaxRetries: normalizeNonNegativeInteger(input.yahooMaxRetries, DEFAULT_CONFIG.yahooMaxRetries),
+    yahooRequestDelayMs: normalizeNonNegativeInteger(input.yahooRequestDelayMs, DEFAULT_CONFIG.yahooRequestDelayMs),
+    yahooRetryBaseDelayMs: normalizeNonNegativeInteger(input.yahooRetryBaseDelayMs, DEFAULT_CONFIG.yahooRetryBaseDelayMs),
     sourcesEnabled: {
       ...DEFAULT_CONFIG.sourcesEnabled,
       ...(input.sourcesEnabled || {})
@@ -91,6 +106,20 @@ function round(value, decimals = 2) {
 
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
+}
+
+function normalizeNonNegativeInteger(value, fallback) {
+  return Number.isInteger(value) && value >= 0 ? value : fallback;
+}
+
+function sleep(ms) {
+  if (!ms || ms <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function parseMagnitude(value) {
@@ -135,6 +164,155 @@ function sourceStatus(status, message, extra = {}) {
     message: message || "",
     status,
     ...extra
+  };
+}
+
+function parseCsvLine(line) {
+  return line.split(",").map((value) => value.trim());
+}
+
+function isRateLimitError(error) {
+  const message = String((error && error.message) || "");
+  return Number(error && error.statusCode) === 429 || message.includes("HTTP 429");
+}
+
+function getYahooCacheDir(outputDir) {
+  const cacheDir = path.join(outputDir, "cache", "yahoo");
+  fs.mkdirSync(cacheDir, { recursive: true });
+  return cacheDir;
+}
+
+function getYahooCacheFilePath(cacheDir, ticker) {
+  return path.join(cacheDir, `${normalizeTicker(ticker)}.json`);
+}
+
+function readJsonSafe(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (error) {
+    return null;
+  }
+}
+
+function readYahooCache(cacheDir, ticker, ttlMinutes) {
+  if (!ttlMinutes || ttlMinutes <= 0) {
+    return null;
+  }
+
+  const filePath = getYahooCacheFilePath(cacheDir, ticker);
+
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  const payload = readJsonSafe(filePath);
+
+  if (!payload || !payload.cachedAt || !payload.marketData) {
+    return null;
+  }
+
+  const ageMs = Date.now() - new Date(payload.cachedAt).getTime();
+
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > ttlMinutes * 60 * 1000) {
+    return null;
+  }
+
+  return {
+    cachedAt: payload.cachedAt,
+    source: "yahoo-cache",
+    sourceTag: "yahoo-chart-cache",
+    ...payload.marketData
+  };
+}
+
+function writeYahooCache(cacheDir, ticker, marketData) {
+  const filePath = getYahooCacheFilePath(cacheDir, ticker);
+  const payload = {
+    cachedAt: new Date().toISOString(),
+    marketData: {
+      averageVolume20: isFiniteNumber(marketData.averageVolume20) ? marketData.averageVolume20 : null,
+      dayChangePct: isFiniteNumber(marketData.dayChangePct) ? marketData.dayChangePct : null,
+      dollarVolume: isFiniteNumber(marketData.dollarVolume) ? marketData.dollarVolume : null,
+      fiveDayReturnPct: isFiniteNumber(marketData.fiveDayReturnPct) ? marketData.fiveDayReturnPct : null,
+      gapPct: isFiniteNumber(marketData.gapPct) ? marketData.gapPct : null,
+      lastDataDate: marketData.lastDataDate || null,
+      previousClose: isFiniteNumber(marketData.previousClose) ? marketData.previousClose : null,
+      price: isFiniteNumber(marketData.price) ? marketData.price : null,
+      relativeVolume: isFiniteNumber(marketData.relativeVolume) ? marketData.relativeVolume : null,
+      volume: isFiniteNumber(marketData.volume) ? marketData.volume : null
+    },
+    ticker
+  };
+
+  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+function readLocalCsvMarketData(ticker) {
+  const filePath = path.join(HISTORICAL_PRICES_DIR, `${normalizeTicker(ticker)}.csv`);
+
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
+
+  if (lines.length < 3) {
+    return null;
+  }
+
+  const headers = parseCsvLine(lines[0]);
+  const columnIndex = Object.fromEntries(headers.map((header, index) => [header.toLowerCase(), index]));
+  const requiredColumns = ["date", "open", "close", "volume"];
+
+  if (requiredColumns.some((column) => columnIndex[column] === undefined)) {
+    return null;
+  }
+
+  const rows = lines
+    .slice(1)
+    .map((line) => parseCsvLine(line))
+    .map((values) => ({
+      close: Number(values[columnIndex.close]),
+      date: values[columnIndex.date],
+      open: Number(values[columnIndex.open]),
+      volume: Number(values[columnIndex.volume])
+    }))
+    .filter((row) => row.date && isFiniteNumber(row.close) && isFiniteNumber(row.volume));
+
+  if (rows.length < 2) {
+    return null;
+  }
+
+  rows.sort((left, right) => String(left.date).localeCompare(String(right.date)));
+
+  const latest = rows[rows.length - 1];
+  const previous = rows[rows.length - 2];
+  const priorVolumes = rows.slice(Math.max(0, rows.length - 21), -1).map((row) => row.volume).filter(isFiniteNumber);
+  const averageVolume20 =
+    priorVolumes.length > 0
+      ? priorVolumes.reduce((sum, value) => sum + value, 0) / priorVolumes.length
+      : null;
+  const dayChangePct = previous && previous.close ? ((latest.close - previous.close) / previous.close) * 100 : null;
+  const gapPct = previous && previous.close && latest.open ? ((latest.open - previous.close) / previous.close) * 100 : null;
+  const relativeVolume = latest && averageVolume20 ? latest.volume / averageVolume20 : null;
+  const dollarVolume = latest.close * latest.volume;
+  const fiveDayAgo = rows.length >= 6 ? rows[rows.length - 6] : null;
+  const fiveDayReturnPct =
+    fiveDayAgo && fiveDayAgo.close ? ((latest.close - fiveDayAgo.close) / fiveDayAgo.close) * 100 : null;
+
+  return {
+    averageVolume20: averageVolume20 ? Math.round(averageVolume20) : null,
+    dayChangePct: round(dayChangePct),
+    dollarVolume: round(dollarVolume),
+    fiveDayReturnPct: round(fiveDayReturnPct),
+    gapPct: round(gapPct),
+    lastDataDate: latest.date,
+    previousClose: round(previous.close),
+    price: round(latest.close),
+    relativeVolume: round(relativeVolume),
+    source: "local-csv-fallback",
+    sourceTag: "local-csv-fallback",
+    volume: latest.volume
   };
 }
 
@@ -203,22 +381,25 @@ function addSeed(seeds, ticker, source, metadata = {}) {
 
 function collectUniverseSeeds(state, config) {
   const seeds = new Map();
+  const useLocalSeeds = config.seedMode !== "config-only";
 
-  (state.positions.positions || []).forEach((position) => {
-    addSeed(seeds, position.ticker, "position", {
-      localContext: position
+  if (useLocalSeeds) {
+    (state.positions.positions || []).forEach((position) => {
+      addSeed(seeds, position.ticker, "position", {
+        localContext: position
+      });
     });
-  });
 
-  (state.watchlist.watchlist || []).forEach((item) => {
-    addSeed(seeds, item.ticker, "watchlist", {
-      localContext: item
+    (state.watchlist.watchlist || []).forEach((item) => {
+      addSeed(seeds, item.ticker, "watchlist", {
+        localContext: item
+      });
     });
-  });
 
-  (state.socialSignals.signals || []).forEach((signal) => {
-    addSeed(seeds, signal.ticker, "local-social");
-  });
+    (state.socialSignals.signals || []).forEach((signal) => {
+      addSeed(seeds, signal.ticker, "local-social");
+    });
+  }
 
   config.universeSeeds.forEach((item) => {
     if (typeof item === "string") {
@@ -231,7 +412,7 @@ function collectUniverseSeeds(state, config) {
     }
   });
 
-  if (config.includeEtfs) {
+  if (useLocalSeeds && config.includeEtfs) {
     ETF_SEEDS.forEach((ticker) => {
       addSeed(seeds, ticker, "tactical-etf", {
         assetType: "etf"
@@ -413,32 +594,129 @@ function toYahooMarketData(ticker, chartResult) {
 async function fetchYahooMarketData(tickers, options = {}) {
   const results = [];
   const errors = [];
+  const tickersCached = [];
+  const tickersFailed = [];
+  const tickersFallbackUsed = [];
+  const tickersRateLimited = [];
+  const tickersSuccess = [];
+  const cacheDir = getYahooCacheDir(options.outputDir || path.resolve(process.cwd(), DEFAULT_CONFIG.outputDir));
+  const requestDelayMs = normalizeNonNegativeInteger(options.requestDelayMs, DEFAULT_CONFIG.yahooRequestDelayMs);
+  const maxRetries = normalizeNonNegativeInteger(options.maxRetries, DEFAULT_CONFIG.yahooMaxRetries);
+  const retryBaseDelayMs = normalizeNonNegativeInteger(options.retryBaseDelayMs, DEFAULT_CONFIG.yahooRetryBaseDelayMs);
+  const cacheTtlMinutes = normalizeNonNegativeInteger(options.cacheTtlMinutes, DEFAULT_CONFIG.yahooCacheTtlMinutes);
 
-  for (const ticker of tickers) {
-    try {
-      const response = await requestJson(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`, {
-        query: {
-          interval: "1d",
-          range: "3mo"
-        },
-        timeoutMs: options.timeoutMs || 20000
-      });
+  for (let index = 0; index < tickers.length; index += 1) {
+    const ticker = tickers[index];
+    const cached = readYahooCache(cacheDir, ticker, cacheTtlMinutes);
 
+    if (cached) {
       results.push({
-        data: toYahooMarketData(ticker, response.json),
+        data: cached,
         ticker
       });
-    } catch (error) {
-      errors.push({
-        error: error.message,
-        ticker
-      });
+      tickersCached.push(ticker);
+      continue;
+    }
+
+    let lastError = null;
+    let rateLimited = false;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      try {
+        const response = await requestJson(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`, {
+          query: {
+            interval: "1d",
+            range: "3mo"
+          },
+          timeoutMs: options.timeoutMs || 20000
+        });
+        const marketData = {
+          source: "yahoo-chart",
+          sourceTag: "yahoo-chart",
+          ...toYahooMarketData(ticker, response.json)
+        };
+
+        writeYahooCache(cacheDir, ticker, marketData);
+        results.push({
+          data: marketData,
+          ticker
+        });
+        tickersSuccess.push(ticker);
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+
+        if (isRateLimitError(error)) {
+          rateLimited = true;
+
+          if (attempt < maxRetries) {
+            await sleep(retryBaseDelayMs * (attempt + 1));
+            continue;
+          }
+        }
+
+        break;
+      }
+    }
+
+    if (lastError) {
+      if (rateLimited) {
+        tickersRateLimited.push(ticker);
+      }
+
+      if (options.useLocalCsvFallback) {
+        const fallbackData = readLocalCsvMarketData(ticker);
+
+        if (fallbackData) {
+          results.push({
+            data: fallbackData,
+            ticker
+          });
+          tickersFallbackUsed.push(ticker);
+          errors.push({
+            error: lastError.message,
+            fallbackUsed: true,
+            ticker
+          });
+        } else {
+          tickersFailed.push(ticker);
+          errors.push({
+            error: lastError.message,
+            ticker
+          });
+        }
+      } else {
+        tickersFailed.push(ticker);
+        errors.push({
+          error: lastError.message,
+          ticker
+        });
+      }
+    }
+
+    if (index < tickers.length - 1 && requestDelayMs > 0) {
+      await sleep(requestDelayMs);
     }
   }
 
+  const usableCount = results.length;
+  const status =
+    usableCount === 0 && errors.length > 0 ? "error"
+    : errors.length > 0 ? "partial"
+    : tickersCached.length > 0 && tickersSuccess.length === 0 ? "cached"
+    : "ok";
+
   return {
+    count: usableCount,
     errors,
-    results
+    results,
+    status,
+    tickersCached,
+    tickersFailed,
+    tickersFallbackUsed,
+    tickersRateLimited,
+    tickersSuccess
   };
 }
 
@@ -560,9 +838,10 @@ function applyYahooData(candidate, data, config) {
     ...(candidate.marketData || {}),
     ...data
   };
-  addSource(candidate, "yahoo-chart");
+  addSource(candidate, data.sourceTag || "yahoo-chart");
 
   const unusualVolume =
+    data.sourceTag !== "local-csv-fallback" &&
     isFiniteNumber(data.relativeVolume) &&
     data.relativeVolume >= config.minRelativeVolume &&
     (
@@ -671,6 +950,7 @@ function analyzeCandidate(candidate, config, currentDate) {
   const market = candidate.marketData || {};
   const localScores = candidate.localScores || {};
   const hasMarketData = isFiniteNumber(market.price);
+  const usesFallbackMarketData = market.sourceTag === "local-csv-fallback";
   const priceOk = hasMarketData && market.price >= config.minPrice;
   const dollarVolumeOk = isFiniteNumber(market.dollarVolume) && market.dollarVolume >= config.minDollarVolume;
   const relativeVolumeOk = isFiniteNumber(market.relativeVolume) && market.relativeVolume >= config.minRelativeVolume;
@@ -691,6 +971,7 @@ function analyzeCandidate(candidate, config, currentDate) {
   candidate.filterStatus = {
     crowdingOk,
     dollarVolumeOk,
+    fallbackUsed: usesFallbackMarketData,
     hasAnyCatalyst,
     hasLevel1Catalyst,
     hasMarketData,
@@ -719,6 +1000,10 @@ function analyzeCandidate(candidate, config, currentDate) {
     candidate.rejectReasons.push("Sin catalyst verificable o discovery catalyst.");
   }
 
+  if (!hasMarketData) {
+    candidate.rejectReasons.push("Sin market data live usable.");
+  }
+
   if (hasMarketData && !priceOk) {
     candidate.rejectReasons.push(`Precio debajo de minPrice ${config.minPrice}.`);
   }
@@ -734,25 +1019,37 @@ function analyzeCandidate(candidate, config, currentDate) {
   if (!hasMarketData && config.dryRun) {
     candidate.classification = hasAnyCatalyst ? "vigilancia" : "descartada";
     candidate.rejectReasons.push("Dry-run sin precio live; no se eleva a A/A+.");
+    candidate.rejectReasons = [...new Set(candidate.rejectReasons)];
     return candidate;
   }
 
   if (!hasAnyCatalyst || !priceOk || !dollarVolumeOk || pumpExtended) {
     candidate.classification = "descartada";
+    candidate.rejectReasons = [...new Set(candidate.rejectReasons)];
+    return candidate;
+  }
+
+  if (usesFallbackMarketData) {
+    candidate.classification = "vigilancia";
+    candidate.rejectReasons.push("Usa local-csv fallback; no cuenta como live real y no habilita A+.");
+    candidate.rejectReasons = [...new Set(candidate.rejectReasons)];
     return candidate;
   }
 
   if (hasLevel1Catalyst && relativeVolumeOk && downsideClear && crowdingOk) {
     candidate.classification = "A+";
+    candidate.rejectReasons = [...new Set(candidate.rejectReasons)];
     return candidate;
   }
 
   if (hasLevel1Catalyst && (relativeVolumeOk || nearCatalyst) && downsideClear) {
     candidate.classification = "A";
+    candidate.rejectReasons = [...new Set(candidate.rejectReasons)];
     return candidate;
   }
 
   candidate.classification = "vigilancia";
+  candidate.rejectReasons = [...new Set(candidate.rejectReasons)];
   return candidate;
 }
 
@@ -824,10 +1121,10 @@ function renderSummary({ analyzedCandidates, config, currentDate, filteredCandid
 
   Object.entries(sourceStatusMap).forEach(([sourceName, status]) => {
     lines.push(
-      `- ${sourceName}: ${status.status}${status.count !== undefined ? ` | count ${status.count}` : ""}${status.message ? ` | ${status.message}` : ""}`
+      `- ${sourceName}: ${status.status}${status.count !== undefined ? ` | count ${status.count}` : ""}${status.tickersSuccess ? ` | live ${status.tickersSuccess.length}` : ""}${status.tickersCached ? ` | cache ${status.tickersCached.length}` : ""}${status.tickersFallbackUsed ? ` | fallback ${status.tickersFallbackUsed.length}` : ""}${status.tickersRateLimited ? ` | rate_limited ${status.tickersRateLimited.length}` : ""}${status.tickersFailed ? ` | failed ${status.tickersFailed.length}` : ""}${status.message ? ` | ${status.message}` : ""}`
     );
-    (status.errors || []).slice(0, 5).forEach((error) => {
-      lines.push(`- ${sourceName} error ${error.ticker || "n/d"}: ${error.error}`);
+    (status.errors || []).slice(0, 8).forEach((error) => {
+      lines.push(`- ${sourceName} error ${error.ticker || "n/d"}: ${error.error}${error.fallbackUsed ? " | fallback local-csv usado" : ""}`);
     });
   });
 
@@ -861,7 +1158,7 @@ function renderSummary({ analyzedCandidates, config, currentDate, filteredCandid
     .forEach((candidate) => {
       const market = candidate.marketData || {};
       lines.push(
-        `- ${candidate.ticker}: ${candidate.classification} | price ${market.price || "n/d"} | relVol ${market.relativeVolume || "n/d"} | day ${renderPercent(market.dayChangePct)} | ${candidate.rejectReasons[0] || "sin descarte duro"}`
+        `- ${candidate.ticker}: ${candidate.classification} | source ${market.source || "n/d"} | price ${market.price || "n/d"} | relVol ${market.relativeVolume || "n/d"} | day ${renderPercent(market.dayChangePct)} | ${candidate.rejectReasons[0] || "sin descarte duro"}`
       );
     });
 
@@ -877,7 +1174,12 @@ function toConsoleReport(result) {
   const sourceLines = Object.entries(result.sourceStatus)
     .map(([sourceName, status]) => {
       const count = status.count !== undefined ? ` | count ${status.count}` : "";
-      return `- ${sourceName}: ${status.status}${count}${status.message ? ` | ${status.message}` : ""}`;
+      const live = status.tickersSuccess ? ` | live ${status.tickersSuccess.length}` : "";
+      const cache = status.tickersCached ? ` | cache ${status.tickersCached.length}` : "";
+      const fallback = status.tickersFallbackUsed ? ` | fallback ${status.tickersFallbackUsed.length}` : "";
+      const rateLimited = status.tickersRateLimited ? ` | rate_limited ${status.tickersRateLimited.length}` : "";
+      const failed = status.tickersFailed ? ` | failed ${status.tickersFailed.length}` : "";
+      return `- ${sourceName}: ${status.status}${count}${live}${cache}${fallback}${rateLimited}${failed}${status.message ? ` | ${status.message}` : ""}`;
     })
     .join("\n");
   const candidateLines =
@@ -886,7 +1188,7 @@ function toConsoleReport(result) {
       : result.filteredCandidates
         .map((candidate) => {
           const market = candidate.marketData || {};
-          return `- ${candidate.ticker}: ${candidate.classification} | score ${candidate.walyScore} | price ${market.price || "n/d"} | relVol ${market.relativeVolume || "n/d"}`;
+          return `- ${candidate.ticker}: ${candidate.classification} | score ${candidate.walyScore} | source ${market.source || "n/d"} | price ${market.price || "n/d"} | relVol ${market.relativeVolume || "n/d"}`;
         })
         .join("\n");
 
@@ -922,7 +1224,23 @@ async function runLiveUniverseScan(configPath) {
   const tickers = universeSeeds.map((seed) => seed.ticker);
 
   if (config.allowNetwork && isSourceEnabled(config, "yahoo")) {
-    const yahoo = await safeSource(sourceStatusMap, "yahoo", () => fetchYahooMarketData(tickers));
+    const yahoo = await fetchYahooMarketData(tickers, {
+      cacheTtlMinutes: config.yahooCacheTtlMinutes,
+      maxRetries: config.yahooMaxRetries,
+      outputDir,
+      requestDelayMs: config.yahooRequestDelayMs,
+      retryBaseDelayMs: config.yahooRetryBaseDelayMs,
+      useLocalCsvFallback: config.useLocalCsvFallback
+    });
+    sourceStatusMap.yahoo = sourceStatus(yahoo.status, "", {
+      count: yahoo.count,
+      errors: yahoo.errors || [],
+      tickersCached: yahoo.tickersCached || [],
+      tickersFailed: yahoo.tickersFailed || [],
+      tickersFallbackUsed: yahoo.tickersFallbackUsed || [],
+      tickersRateLimited: yahoo.tickersRateLimited || [],
+      tickersSuccess: yahoo.tickersSuccess || []
+    });
     ((yahoo && yahoo.results) || []).forEach((item) => {
       const candidate = ensureCandidate(candidateMap, item.ticker);
       applyYahooData(candidate, item.data, config);

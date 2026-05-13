@@ -3,6 +3,12 @@
   "maxCandidates": 3,
   "allowNetwork": false,
   "dryRun": true,
+  "seedMode": "local-plus-config",
+  "yahooRequestDelayMs": 2000,
+  "yahooMaxRetries": 2,
+  "yahooRetryBaseDelayMs": 5000,
+  "yahooCacheTtlMinutes": 15,
+  "useLocalCsvFallback": true,
   "sourcesEnabled": {
     "yahoo": true,
     "nasdaq": true,
@@ -31,5 +37,5 @@
   "minDollarVolume": 10000000,
   "minRelativeVolume": 1.25,
   "outputDir": "backtests/live-universe-scan",
-  "dryRunNotes": "Fase 1: arquitectura y dry-run chico. Cambiar allowNetwork a true solo para lectura live de fuentes permitidas."
+  "dryRunNotes": "Fase 2: Yahoo puede rate-limitear. El scanner ahora usa delay, retry, cache local y fallback CSV opcional sin tratarlo como live real."
 }
