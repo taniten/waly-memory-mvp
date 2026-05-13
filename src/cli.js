@@ -4,6 +4,7 @@ const path = require("path");
 const { generateBacktestReport } = require("./backtestEngine");
 const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktestEngine");
 const { initData } = require("./initData");
+const { runLiveUniverseScan } = require("./liveUniverseScanner");
 const { generateReport } = require("./reporter");
 const { syncUniverse } = require("./universeEngine");
 const {
@@ -23,6 +24,7 @@ function printUsage() {
   node src/cli.js backtest [--dry-run]
   node src/cli.js historical-backtest <config-json>
   node src/cli.js price-coverage <config-json>
+  node src/cli.js live-scan <config-json>
   node src/cli.js sync-universe
   node src/cli.js add-log <ruta-json>
   node src/cli.js add-outcome <ruta-json>
@@ -236,6 +238,16 @@ async function main() {
         console.log("Price coverage check generado.");
         console.log(`Run dir: ${result.runDir}`);
         console.log(`Coverage JSON: ${result.coveragePath}`);
+        break;
+      }
+      case "live-scan": {
+        const filePath = requirePath(argument, "live-scan");
+        const result = await runLiveUniverseScan(filePath);
+        console.log(result.consoleReport);
+        console.log(`Source status JSON: ${result.paths.sourceStatusPath}`);
+        console.log(`Raw candidates JSON: ${result.paths.rawCandidatesPath}`);
+        console.log(`Filtered candidates JSON: ${result.paths.filteredCandidatesPath}`);
+        console.log(`Summary MD: ${result.paths.summaryPath}`);
         break;
       }
       case "sync-universe": {

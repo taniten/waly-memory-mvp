@@ -1,0 +1,35 @@
+{
+  "maxTickers": 50,
+  "maxCandidates": 3,
+  "allowNetwork": false,
+  "dryRun": true,
+  "sourcesEnabled": {
+    "yahoo": true,
+    "nasdaq": true,
+    "sec": true,
+    "openinsider": false,
+    "openfda": true,
+    "finviz": false,
+    "earnings": true
+  },
+  "universeSeeds": [
+    "VKTX",
+    "ACHV",
+    "VRDN",
+    "OCS",
+    "AXSM",
+    "IPX",
+    "U",
+    "AMZN",
+    "GOOGL"
+  ],
+  "includeEtfs": true,
+  "includeBiotech": true,
+  "includeEarnings": true,
+  "includeInsiders": true,
+  "minPrice": 2,
+  "minDollarVolume": 10000000,
+  "minRelativeVolume": 1.25,
+  "outputDir": "backtests/live-universe-scan",
+  "dryRunNotes": "Fase 1: arquitectura y dry-run chico. Cambiar allowNetwork a true solo para lectura live de fuentes permitidas."
+}
