@@ -1,0 +1,61 @@
+{
+  "maxTickers": 50,
+  "maxCandidates": 5,
+  "useLocalCsv": true,
+  "includeLocalCatalysts": true,
+  "outputDir": "backtests/reversal-radar",
+  "minPrice": 2,
+  "minDollarVolume": 10000000,
+  "minRelativeVolume": 0.75,
+  "minMarketCap": 250000000,
+  "catalystForwardDays": 90,
+  "catalystRecentDays": 14,
+  "requireReboundReason": true,
+  "thresholds": {
+    "strongDrop5dPct": -8,
+    "strongDrop20dPct": -15,
+    "minDistanceFrom52wHighPct": -25
+  },
+  "universeSeeds": [
+    "VKTX",
+    "ACHV",
+    "AXSM",
+    "IPX",
+    "U",
+    "AMZN",
+    "GOOGL"
+  ],
+  "candidates": [],
+  "candidateTemplate": {
+    "ticker": "TICKER",
+    "fallReason": "Documentar por que cayo; no inventar.",
+    "reboundReason": "Documentar catalyst o razon concreta de rebote.",
+    "invalidation": "Precio/evento que invalida el reversal.",
+    "downside": "Downside esperado si falla.",
+    "marketData": {
+      "price": null,
+      "fiveDayReturnPct": null,
+      "twentyDayReturnPct": null,
+      "distanceFrom52wHighPct": null,
+      "relativeVolume": null,
+      "dollarVolume": null,
+      "marketCap": null
+    },
+    "catalysts": [
+      {
+        "catalystType": "fda",
+        "catalystDate": "YYYY-MM-DD",
+        "source": "Fuente verificable",
+        "notes": "Detalle del catalyst"
+      }
+    ],
+    "fundamentals": {
+      "debtRisk": 0,
+      "dilutionRisk": 0,
+      "structuralRisk": 0,
+      "fraud": false,
+      "dilutionExtreme": false,
+      "crlTerminal": false
+    }
+  }
+}
