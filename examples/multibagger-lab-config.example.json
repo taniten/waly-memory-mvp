@@ -1,0 +1,48 @@
+{
+  "runId": "demo-multibagger-lab-local-csv",
+  "outputDir": "backtests/multibagger-lab",
+  "allowNetwork": false,
+  "dataProvider": "local-csv",
+  "historicalPricesDir": "historical-prices",
+  "priceFilePattern": "{ticker}.example.csv",
+  "entryPricePolicy": "next-open",
+  "maxSignals": 3,
+  "signals": [
+    {
+      "ticker": "IPX",
+      "signalDate": "2026-04-08",
+      "assetType": "equity",
+      "marketCapCategory": "small-cap",
+      "playbook": "earnings-rerating",
+      "catalystType": "earnings",
+      "setupRankAtEntry": "A",
+      "source": "manual-example",
+      "whyItLookedGood": "Earnings rerating example with rising local CSV prices.",
+      "notes": "Sanitized sample signal for plumbing only; not a real recommendation."
+    },
+    {
+      "ticker": "AXSM",
+      "signalDate": "2026-04-08",
+      "assetType": "equity",
+      "marketCapCategory": "mid-cap",
+      "playbook": "biotech-catalyst",
+      "catalystType": "fda",
+      "setupRankAtEntry": "B",
+      "source": "manual-example",
+      "whyItLookedGood": "Biotech catalyst example using local CSV coverage.",
+      "notes": "Sanitized sample signal for plumbing only; not a real recommendation."
+    },
+    {
+      "ticker": "AXSM",
+      "signalDate": "2026-05-15",
+      "assetType": "equity",
+      "marketCapCategory": "mid-cap",
+      "playbook": "phase3-readout",
+      "catalystType": "fda",
+      "setupRankAtEntry": "A",
+      "source": "manual-example",
+      "whyItLookedGood": "Late signal with strong setup label but too little follow-through in available CSV.",
+      "notes": "Included to exercise the looked-good-but-failed section without inventing future prices."
+    }
+  ]
+}

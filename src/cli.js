@@ -5,6 +5,7 @@ const { generateBacktestReport } = require("./backtestEngine");
 const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktestEngine");
 const { initData } = require("./initData");
 const { runLiveUniverseScan } = require("./liveUniverseScanner");
+const { runMultibaggerLab } = require("./multibaggerLab");
 const { runReversalScan } = require("./reversalRadar");
 const { generateReport } = require("./reporter");
 const { syncUniverse } = require("./universeEngine");
@@ -27,6 +28,7 @@ function printUsage() {
   node src/cli.js price-coverage <config-json>
   node src/cli.js live-scan <config-json>
   node src/cli.js reversal-scan <config-json>
+  node src/cli.js multibagger-lab <config-json>
   node src/cli.js sync-universe
   node src/cli.js add-log <ruta-json>
   node src/cli.js add-outcome <ruta-json>
@@ -260,6 +262,21 @@ async function main() {
         console.log(`Raw candidates JSON: ${result.paths.rawCandidatesPath}`);
         console.log(`Filtered candidates JSON: ${result.paths.filteredCandidatesPath}`);
         console.log(`Summary MD: ${result.paths.summaryPath}`);
+        break;
+      }
+      case "multibagger-lab": {
+        const filePath = requirePath(argument, "multibagger-lab");
+        const result = runMultibaggerLab(filePath);
+        console.log("WALY Multibagger Lab generado.");
+        console.log(`Run dir: ${result.paths.runDir}`);
+        console.log(`Raw signals JSON: ${result.paths.rawSignalsPath}`);
+        console.log(`Analyzed signals JSON: ${result.paths.analyzedSignalsPath}`);
+        console.log(`Playbook stats JSON: ${result.paths.playbookStatsPath}`);
+        console.log(`Summary MD: ${result.paths.summaryPath}`);
+        console.log(`Signals analyzed: ${result.summary.signalsCount}`);
+        console.log(`Multibaggers: ${result.summary.multibaggerCount}`);
+        console.log(`hit100: ${result.summary.hit100 === null ? "n/d" : `${result.summary.hit100}%`}`);
+        console.log(`Errores: ${result.summary.errorCount}`);
         break;
       }
       case "sync-universe": {
