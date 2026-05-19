@@ -1,0 +1,63 @@
+{
+  "maxTickers": 50,
+  "maxCandidates": 3,
+  "useLocalCsv": true,
+  "includeLocalCatalysts": true,
+  "outputDir": "backtests/short-radar",
+  "minPrice": 2,
+  "minDollarVolume": 10000000,
+  "minMarketCap": 250000000,
+  "minRelativeVolume": 1.0,
+  "thresholds": {
+    "overextended5dPct": 20,
+    "overextended20dPct": 40,
+    "gapUpPct": 10,
+    "highSqueezeRiskShortInterestPct": 20
+  },
+  "universeSeeds": [
+    "VKTX",
+    "ACHV",
+    "AXSM",
+    "IPX",
+    "U",
+    "AMZN",
+    "GOOGL",
+    "VRDN",
+    "OCS"
+  ],
+  "candidates": [],
+  "candidateTemplate": {
+    "ticker": "TICKER",
+    "shortThesis": "Documentar razon bajista; no inventar.",
+    "invalidation": "Nivel/evento que invalida el setup bajista.",
+    "optionsAvailable": true,
+    "hardToBorrow": false,
+    "borrowFeePct": null,
+    "shortInterestPct": null,
+    "floatShares": null,
+    "socialVolumeScore": null,
+    "shelfOrAtm": false,
+    "dilutionRisk": false,
+    "guidanceRisk": false,
+    "marketData": {
+      "price": null,
+      "oneDayReturnPct": null,
+      "fiveDayReturnPct": null,
+      "twentyDayReturnPct": null,
+      "gapUpPct": null,
+      "distanceFrom52wHighPct": null,
+      "distanceFromRecentHighPct": null,
+      "relativeVolume": null,
+      "dollarVolume": null,
+      "marketCap": null
+    },
+    "catalysts": [
+      {
+        "catalystType": "earnings",
+        "catalystDate": "YYYY-MM-DD",
+        "source": "Fuente local verificable",
+        "notes": "Detalle del catalyst o riesgo de catalyst"
+      }
+    ]
+  }
+}

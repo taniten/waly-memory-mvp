@@ -10,6 +10,7 @@ const { runOpportunityRouter } = require("./opportunityRouter");
 const { runPortfolioReview } = require("./portfolioEngine");
 const { runReversalScan } = require("./reversalRadar");
 const { generateReport } = require("./reporter");
+const { runShortScan } = require("./shortRadar");
 const { syncUniverse } = require("./universeEngine");
 const {
   addOutcomeEntry,
@@ -30,6 +31,7 @@ function printUsage() {
   node src/cli.js price-coverage <config-json>
   node src/cli.js live-scan <config-json>
   node src/cli.js reversal-scan <config-json>
+  node src/cli.js short-scan <config-json>
   node src/cli.js multibagger-lab <config-json>
   node src/cli.js portfolio-review
   node src/cli.js opportunity-router
@@ -261,6 +263,16 @@ async function main() {
       case "reversal-scan": {
         const filePath = requirePath(argument, "reversal-scan");
         const result = runReversalScan(filePath);
+        console.log(result.consoleReport);
+        console.log(`Source status JSON: ${result.paths.sourceStatusPath}`);
+        console.log(`Raw candidates JSON: ${result.paths.rawCandidatesPath}`);
+        console.log(`Filtered candidates JSON: ${result.paths.filteredCandidatesPath}`);
+        console.log(`Summary MD: ${result.paths.summaryPath}`);
+        break;
+      }
+      case "short-scan": {
+        const filePath = requirePath(argument, "short-scan");
+        const result = runShortScan(filePath);
         console.log(result.consoleReport);
         console.log(`Source status JSON: ${result.paths.sourceStatusPath}`);
         console.log(`Raw candidates JSON: ${result.paths.rawCandidatesPath}`);
