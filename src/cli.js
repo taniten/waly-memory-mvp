@@ -6,6 +6,7 @@ const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktes
 const { initData } = require("./initData");
 const { runLiveUniverseScan } = require("./liveUniverseScanner");
 const { runMultibaggerLab } = require("./multibaggerLab");
+const { runPortfolioReview } = require("./portfolioEngine");
 const { runReversalScan } = require("./reversalRadar");
 const { generateReport } = require("./reporter");
 const { syncUniverse } = require("./universeEngine");
@@ -29,6 +30,7 @@ function printUsage() {
   node src/cli.js live-scan <config-json>
   node src/cli.js reversal-scan <config-json>
   node src/cli.js multibagger-lab <config-json>
+  node src/cli.js portfolio-review
   node src/cli.js sync-universe
   node src/cli.js add-log <ruta-json>
   node src/cli.js add-outcome <ruta-json>
@@ -277,6 +279,11 @@ async function main() {
         console.log(`Multibaggers: ${result.summary.multibaggerCount}`);
         console.log(`hit100: ${result.summary.hit100 === null ? "n/d" : `${result.summary.hit100}%`}`);
         console.log(`Errores: ${result.summary.errorCount}`);
+        break;
+      }
+      case "portfolio-review": {
+        const result = runPortfolioReview();
+        console.log(result.consoleReport);
         break;
       }
       case "sync-universe": {
