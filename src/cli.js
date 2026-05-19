@@ -6,6 +6,7 @@ const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktes
 const { initData } = require("./initData");
 const { runLiveUniverseScan } = require("./liveUniverseScanner");
 const { runMultibaggerLab } = require("./multibaggerLab");
+const { runOpportunityRouter } = require("./opportunityRouter");
 const { runPortfolioReview } = require("./portfolioEngine");
 const { runReversalScan } = require("./reversalRadar");
 const { generateReport } = require("./reporter");
@@ -31,6 +32,7 @@ function printUsage() {
   node src/cli.js reversal-scan <config-json>
   node src/cli.js multibagger-lab <config-json>
   node src/cli.js portfolio-review
+  node src/cli.js opportunity-router
   node src/cli.js sync-universe
   node src/cli.js add-log <ruta-json>
   node src/cli.js add-outcome <ruta-json>
@@ -283,6 +285,11 @@ async function main() {
       }
       case "portfolio-review": {
         const result = runPortfolioReview();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "opportunity-router": {
+        const result = runOpportunityRouter();
         console.log(result.consoleReport);
         break;
       }
