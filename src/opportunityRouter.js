@@ -304,10 +304,28 @@ function hasPositiveSizing(idea) {
   return isFiniteNumber(idea.maxSuggestedPositionPct) && idea.maxSuggestedPositionPct > 0;
 }
 
+function hasZeroSizing(item) {
+  return [
+    "proposedPositionPct",
+    "riskBudgetPct",
+    "maxSuggestedPositionPct",
+    "localContext.proposedPositionPct",
+    "localContext.riskBudgetPct",
+    "localContext.maxSuggestedPositionPct",
+    "metadata.proposedPositionPct",
+    "metadata.riskBudgetPct",
+    "metadata.maxSuggestedPositionPct"
+  ].some((dottedPath) => {
+    const value = coerceNumber(getPathValue(item, dottedPath));
+    return isFiniteNumber(value) && value === 0;
+  });
+}
+
 function isManualCandidateEligible(idea, { alreadyInPortfolio, portfolioRisk }) {
   return Boolean(
     idea.sourceKind === "watchlist" &&
       !alreadyInPortfolio &&
+      !idea.hasZeroSizing &&
       isHighQualityWatchlistClassification(idea.classificationOriginal) &&
       hasMarketData(idea) &&
       hasDatedCatalyst(idea) &&
@@ -389,6 +407,7 @@ function normalizeSourceIdea(sourceKind, item, filePath) {
     invalidation: normalizeInvalidation(item),
     marketPrice: getMarketPrice(item),
     maxSuggestedPositionPct: readFirstNumber(item, SIZE_PATHS),
+    hasZeroSizing: hasZeroSizing(item),
     optionsAvailable: hasOptionsAvailable(item),
     playbook: normalizePlaybook(item, sourceKind),
     raw: item,
@@ -567,7 +586,7 @@ function hasPortfolioRiskBlock(portfolioRisk) {
 }
 
 function chooseAllowedVehicle(idea, decision, blockers) {
-  if (decision === "discard" || decision === "wait-for-data") {
+  if (decision === "discard" || decision === "wait-for-data" || idea.hasZeroSizing) {
     return "no-trade";
   }
 
@@ -689,6 +708,10 @@ function getInitialDecision(idea, context) {
     decision = "watch";
   }
 
+  if (idea.hasZeroSizing && decision !== "discard" && decision !== "reduce-risk") {
+    decision = "watch";
+  }
+
   if (decision === "watch" && isManualCandidateEligible(idea, { alreadyInPortfolio, portfolioRisk })) {
     decision = "manual-candidate";
   }
@@ -746,6 +769,10 @@ function routeIdea(idea, context) {
     decision = "watch";
   }
 
+  const maxSuggestedPositionPct = idea.hasZeroSizing
+    ? 0
+    : isFiniteNumber(idea.maxSuggestedPositionPct) ? idea.maxSuggestedPositionPct : null;
+
   return {
     ticker: idea.ticker,
     sourceKind: idea.sourceKind,
@@ -756,7 +783,7 @@ function routeIdea(idea, context) {
     portfolioRiskAction: portfolioRisk ? portfolioRisk.action : null,
     decision,
     allowedVehicle,
-    maxSuggestedPositionPct: isFiniteNumber(idea.maxSuggestedPositionPct) ? idea.maxSuggestedPositionPct : null,
+    maxSuggestedPositionPct,
     blockers: [...new Set(blockers.filter(Boolean))],
     supportingReasons: routed.supportingReasons,
     invalidation: idea.invalidation || null,
@@ -811,6 +838,22 @@ function countBySource(ideas) {
   }, {});
 }
 
+function uniqueByTicker(ideas) {
+  const seen = new Set();
+  const result = [];
+
+  ideas.forEach((idea) => {
+    if (seen.has(idea.ticker)) {
+      return;
+    }
+
+    seen.add(idea.ticker);
+    result.push(idea);
+  });
+
+  return result;
+}
+
 function renderIdeaLine(idea) {
   const size = isFiniteNumber(idea.maxSuggestedPositionPct) ? `${idea.maxSuggestedPositionPct}%` : "n/d";
   const blockers = idea.blockers.length ? ` | blockers: ${idea.blockers.slice(0, 3).join("; ")}` : "";
@@ -829,12 +872,12 @@ function renderSummary({ currentDate, portfolioReview, routedIdeas, sourceReads 
   const analysis = portfolioReview.analysis || {};
   const positions = analysis.estimatedPositions || [];
   const sourceCounts = countBySource(routedIdeas);
-  const operable = routedIdeas.filter((idea) => idea.decision === "operate").slice(0, 3);
-  const manualCandidates = routedIdeas.filter((idea) => idea.decision === "manual-candidate");
-  const watch = routedIdeas.filter((idea) => idea.decision === "watch");
+  const operable = uniqueByTicker(routedIdeas.filter((idea) => idea.decision === "operate")).slice(0, 3);
+  const manualCandidates = uniqueByTicker(routedIdeas.filter((idea) => idea.decision === "manual-candidate"));
+  const watch = uniqueByTicker(routedIdeas.filter((idea) => idea.decision === "watch"));
   const discarded = routedIdeas.filter((idea) => idea.decision === "discard");
   const waiting = routedIdeas.filter((idea) => idea.decision === "wait-for-data");
-  const reduceRisk = routedIdeas.filter((idea) => idea.decision === "reduce-risk");
+  const reduceRisk = uniqueByTicker(routedIdeas.filter((idea) => idea.decision === "reduce-risk"));
   const top = routedIdeas.slice(0, 10);
   const blockers = [...new Set(routedIdeas.flatMap((idea) => idea.blockers))];
   const loadedSources = sourceReads.filter((source) => source.loaded);
@@ -915,9 +958,9 @@ function renderSummary({ currentDate, portfolioReview, routedIdeas, sourceReads 
 }
 
 function renderConsoleReport(result) {
-  const operable = result.routedIdeas.filter((idea) => idea.decision === "operate");
-  const manualCandidates = result.routedIdeas.filter((idea) => idea.decision === "manual-candidate");
-  const watch = result.routedIdeas.filter((idea) => idea.decision === "watch");
+  const operable = uniqueByTicker(result.routedIdeas.filter((idea) => idea.decision === "operate"));
+  const manualCandidates = uniqueByTicker(result.routedIdeas.filter((idea) => idea.decision === "manual-candidate"));
+  const watch = uniqueByTicker(result.routedIdeas.filter((idea) => idea.decision === "watch"));
   const blockers = [...new Set(result.routedIdeas.flatMap((idea) => idea.blockers))];
 
   return [
