@@ -25,7 +25,8 @@ const SOURCE_FILES = [
 
 const DIRECT_SCAN_SOURCES = new Set(["live-scan", "reversal-scan", "short-scan"]);
 const DECISION_ORDER = {
-  operate: 5,
+  operate: 6,
+  "manual-candidate": 5,
   "reduce-risk": 4,
   watch: 3,
   "wait-for-data": 2,
@@ -278,6 +279,40 @@ function hasCriticalCatalyst(idea) {
       idea.raw.catalystWindow ||
       (Array.isArray(idea.raw.catalysts) && idea.raw.catalysts.length > 0) ||
       (Array.isArray(idea.raw.currentCatalysts) && idea.raw.currentCatalysts.length > 0)
+  );
+}
+
+function hasDatedCatalyst(idea) {
+  return Boolean(
+    idea.catalystType &&
+      (idea.raw.catalystDate ||
+        idea.raw.catalystWindow ||
+        getPathValue(idea.raw, "localContext.catalystDate") ||
+        getPathValue(idea.raw, "localContext.catalystWindow") ||
+        getPathValue(idea.raw, "metadata.catalystDate") ||
+        getPathValue(idea.raw, "metadata.catalystWindow") ||
+        getPathValue(idea.raw, "currentCatalysts.0.catalystDate") ||
+        getPathValue(idea.raw, "catalysts.0.catalystDate"))
+  );
+}
+
+function isHighQualityWatchlistClassification(classification) {
+  return ["a", "a+"].includes(normalizeLower(classification));
+}
+
+function hasPositiveSizing(idea) {
+  return isFiniteNumber(idea.maxSuggestedPositionPct) && idea.maxSuggestedPositionPct > 0;
+}
+
+function isManualCandidateEligible(idea, { alreadyInPortfolio, portfolioRisk }) {
+  return Boolean(
+    idea.sourceKind === "watchlist" &&
+      !alreadyInPortfolio &&
+      isHighQualityWatchlistClassification(idea.classificationOriginal) &&
+      hasMarketData(idea) &&
+      hasDatedCatalyst(idea) &&
+      hasPositiveSizing(idea) &&
+      !hasPortfolioRiskBlock(portfolioRisk)
   );
 }
 
@@ -554,7 +589,7 @@ function chooseAllowedVehicle(idea, decision, blockers) {
   }
 
   const requestedVehicle = normalizeLower(idea.raw.allowedVehicle || idea.raw.vehicle || idea.raw.instrument);
-  if (["call", "call-spread", "equity"].includes(requestedVehicle)) {
+  if (["call", "call-spread", "equity", "manual-review", "no-trade"].includes(requestedVehicle)) {
     return requestedVehicle;
   }
 
@@ -654,6 +689,10 @@ function getInitialDecision(idea, context) {
     decision = "watch";
   }
 
+  if (decision === "watch" && isManualCandidateEligible(idea, { alreadyInPortfolio, portfolioRisk })) {
+    decision = "manual-candidate";
+  }
+
   return {
     blockers: [...new Set(blockers.filter(Boolean))],
     decision,
@@ -671,6 +710,10 @@ function scoreIdeaForOrdering(idea) {
 function computeConfidence(idea) {
   if (idea.decision === "operate" && idea.blockers.length === 0) {
     return "high";
+  }
+
+  if (idea.decision === "manual-candidate" && idea.blockers.length === 0) {
+    return "medium";
   }
 
   if (idea.decision === "watch" && idea.supportingReasons.length > 0 && idea.blockers.length <= 2) {
@@ -787,6 +830,7 @@ function renderSummary({ currentDate, portfolioReview, routedIdeas, sourceReads 
   const positions = analysis.estimatedPositions || [];
   const sourceCounts = countBySource(routedIdeas);
   const operable = routedIdeas.filter((idea) => idea.decision === "operate").slice(0, 3);
+  const manualCandidates = routedIdeas.filter((idea) => idea.decision === "manual-candidate");
   const watch = routedIdeas.filter((idea) => idea.decision === "watch");
   const discarded = routedIdeas.filter((idea) => idea.decision === "discard");
   const waiting = routedIdeas.filter((idea) => idea.decision === "wait-for-data");
@@ -827,26 +871,30 @@ function renderSummary({ currentDate, portfolioReview, routedIdeas, sourceReads 
   lines.push("");
   lines.push(...renderList("## 3. Top routed ideas", top, "Sin ideas ruteadas."));
   lines.push(...renderList("## 4. Operables 0-3", operable, "Ninguna idea operable hoy."));
-  lines.push(...renderList("## 5. Watchlist", watch, "Sin ideas en vigilancia."));
-  lines.push(...renderList("## 6. Descartadas", discarded, "Sin descartes."));
+  lines.push(...renderList("## 5. Manual candidates", manualCandidates, "Ninguna idea candidata a revision manual hoy."));
+  lines.push(...renderList("## 6. Watch", watch, "Sin ideas en vigilancia."));
+  lines.push(...renderList("## 7. Discarded", discarded, "Sin descartes."));
   if (waiting.length || reduceRisk.length) {
     lines.push("## Estados adicionales");
     waiting.forEach((idea) => lines.push(renderIdeaLine(idea)));
     reduceRisk.forEach((idea) => lines.push(renderIdeaLine(idea)));
     lines.push("");
   }
-  lines.push("## 7. Bloqueos principales");
+  lines.push("## 8. Bloqueos principales");
   if (blockers.length === 0) {
     lines.push("- Sin bloqueos principales.");
   } else {
     blockers.slice(0, 12).forEach((blocker) => lines.push(`- ${blocker}`));
   }
   lines.push("");
-  lines.push("## 8. Que hacer hoy");
+  lines.push("## 9. Que hacer hoy");
   if (operable.length === 0) {
     lines.push("- No operar: no hay idea que pase datos, catalyst, sizing y riesgo.");
   } else {
     lines.push(`- Revisar manualmente ${operable.map((idea) => idea.ticker).join(", ")} antes de cualquier ticket.`);
+  }
+  if (manualCandidates.length) {
+    lines.push(`- Revisar como candidata manual ${manualCandidates.map((idea) => idea.ticker).join(", ")}; no es operate automatico.`);
   }
   if (reduceRisk.length) {
     lines.push(`- Revisar reduccion manual de riesgo en ${reduceRisk.map((idea) => idea.ticker).join(", ")}.`);
@@ -856,7 +904,7 @@ function renderSummary({ currentDate, portfolioReview, routedIdeas, sourceReads 
   }
   lines.push("- Mantener cartera abierta por delante de ideas nuevas.");
   lines.push("");
-  lines.push("## 9. Que NO hacer");
+  lines.push("## 10. Que NO hacer");
   lines.push("- No ejecutar ordenes desde este reporte.");
   lines.push("- No usar IBKR, Binance ni conectores de ejecucion.");
   lines.push("- No inventar market data, borrow, optionsAvailable, catalyst ni liquidez.");
@@ -868,6 +916,7 @@ function renderSummary({ currentDate, portfolioReview, routedIdeas, sourceReads 
 
 function renderConsoleReport(result) {
   const operable = result.routedIdeas.filter((idea) => idea.decision === "operate");
+  const manualCandidates = result.routedIdeas.filter((idea) => idea.decision === "manual-candidate");
   const watch = result.routedIdeas.filter((idea) => idea.decision === "watch");
   const blockers = [...new Set(result.routedIdeas.flatMap((idea) => idea.blockers))];
 
@@ -876,6 +925,7 @@ function renderConsoleReport(result) {
     `Output dir: ${formatRelative(result.paths.outputDir)}`,
     `Routed ideas: ${result.routedIdeas.length}`,
     `Operables: ${operable.length ? operable.map((idea) => idea.ticker).join(", ") : "ninguna"}`,
+    `Manual candidates: ${manualCandidates.length ? manualCandidates.map((idea) => idea.ticker).join(", ") : "ninguna"}`,
     `Watch: ${watch.length ? watch.map((idea) => idea.ticker).join(", ") : "ninguna"}`,
     `Bloqueos: ${blockers.length ? blockers.slice(0, 5).join(" | ") : "ninguno"}`,
     `routedIdeas.json: ${formatRelative(result.paths.routedIdeasPath)}`,
