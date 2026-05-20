@@ -801,6 +801,28 @@ function resolveEntryFromRows(signal, rows, config) {
   throw new Error(`entryPricePolicy no soportada: ${policy}`);
 }
 
+function getLatestAvailablePriceDate(rows) {
+  return rows.length ? rows[rows.length - 1].date : null;
+}
+
+function getWaitingForEntryDate(signal, rows, config) {
+  if (config.entryPricePolicy !== "next-open") {
+    return null;
+  }
+
+  const latestAvailablePriceDate = getLatestAvailablePriceDate(rows);
+
+  if (!latestAvailablePriceDate || latestAvailablePriceDate > signal.signalDate) {
+    return null;
+  }
+
+  return {
+    earliestEntryDate: getNextBusinessDate(signal.signalDate),
+    latestAvailablePriceDate,
+    pendingReasonCode: "waiting-for-entry-date"
+  };
+}
+
 function buildEvaluationSeries(rows, entryResolution) {
   const closeBasedEntry = entryResolution.entryPriceSource === "signal-close" ||
     entryResolution.entryPriceSource === "next-close" ||
@@ -836,6 +858,16 @@ function buildEvaluationSeries(rows, entryResolution) {
 
 function buildLocalCsvSeries(signal, normalizedConfig) {
   const rows = getLocalCsvRows(signal, normalizedConfig);
+  const waitingForEntryDate = getWaitingForEntryDate(signal, rows, normalizedConfig);
+
+  if (waitingForEntryDate) {
+    return {
+      ...waitingForEntryDate,
+      waitingForEntryDate: true,
+      priceSource: resolvePriceFilePath(signal, normalizedConfig)
+    };
+  }
+
   const entryResolution = resolveEntryFromRows(signal, rows, normalizedConfig);
   const evaluation = buildEvaluationSeries(rows, entryResolution);
 
@@ -847,6 +879,68 @@ function buildLocalCsvSeries(signal, normalizedConfig) {
     evaluationPoints: evaluation.points,
     latestAvailablePriceDate: evaluation.latestAvailablePriceDate,
     priceSource: resolvePriceFilePath(signal, normalizedConfig)
+  };
+}
+
+function buildWaitingForEntryMetrics(signal, priceSeries, config) {
+  const missingHorizons = [...config.horizons];
+  const requiredThroughDate = getRequiredThroughDate(
+    priceSeries.earliestEntryDate || signal.signalDate,
+    config.horizons
+  );
+  const pendingReason =
+    `waiting-for-entry-date: entryPricePolicy next-open requiere una rueda posterior a ${signal.signalDate}. ` +
+    `Latest available: ${priceSeries.latestAvailablePriceDate || "n/d"} | earliest entry date: ${priceSeries.earliestEntryDate || "n/d"} | required through: ${requiredThroughDate || "n/d"}.`;
+  const hitTargetsByHorizon = Object.fromEntries(
+    config.horizons.map((horizon) => [
+      String(horizon),
+      {
+        hit10pct: null,
+        hit15pct: null,
+        hit7pct: null
+      }
+    ])
+  );
+  const returnFields = Object.fromEntries(
+    config.horizons.map((horizon) => [getReturnFieldName(horizon), null])
+  );
+
+  return {
+    assetType: signal.assetType,
+    catalystType: signal.catalystType || null,
+    actualExecutionVerified: signal.actualExecutionVerified,
+    completedHorizons: [],
+    daysToPeak: null,
+    earliestEntryDate: priceSeries.earliestEntryDate,
+    earliestNextHorizonDate: null,
+    entryDate: null,
+    entryPrice: null,
+    entryPriceNote: signal.entryPriceNote,
+    entryPricePolicy: config.entryPricePolicy,
+    entryPriceSource: "next-open",
+    entryPriceWarning: null,
+    failedFast: null,
+    falsePositive: null,
+    hit10pct: null,
+    hit15pct: null,
+    hit7pct: null,
+    hitTargetsByHorizon,
+    incompleteReason: pendingReason,
+    latestAvailablePriceDate: priceSeries.latestAvailablePriceDate,
+    maxDrawdownPct: null,
+    missingHorizons,
+    notes: signal.notes || "",
+    pendingReason,
+    pendingReasonCode: priceSeries.pendingReasonCode,
+    peakReturnPct: null,
+    playbookType: signal.playbookType,
+    requiredThroughDate,
+    ...returnFields,
+    setupRankAtEntry: signal.setupRankAtEntry,
+    signalDate: signal.signalDate,
+    sourceKind: signal.sourceKind || null,
+    status: "pending",
+    ticker: signal.ticker
   };
 }
 
@@ -1411,6 +1505,15 @@ function processSignal(signal, normalizedConfig) {
 
   if (normalizedConfig.dataProvider === "local-csv") {
     const priceSeries = buildLocalCsvSeries(signal, normalizedConfig);
+
+    if (priceSeries.waitingForEntryDate) {
+      return {
+        ...buildWaitingForEntryMetrics(signal, priceSeries, normalizedConfig),
+        priceSource: priceSeries.priceSource,
+        provider: "local-csv"
+      };
+    }
+
     const metrics = computeSignalMetrics(signal, priceSeries, normalizedConfig);
 
     return {
