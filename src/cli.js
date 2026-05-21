@@ -7,6 +7,7 @@ const { initData } = require("./initData");
 const { runLiveUniverseScan } = require("./liveUniverseScanner");
 const { runMultibaggerLab } = require("./multibaggerLab");
 const { runOpportunityRouter } = require("./opportunityRouter");
+const { runPortfolioBacktest } = require("./portfolioBacktest");
 const { runPortfolioReview } = require("./portfolioEngine");
 const { runReversalScan } = require("./reversalRadar");
 const { generateReport } = require("./reporter");
@@ -29,6 +30,7 @@ function printUsage() {
   node src/cli.js backtest [--dry-run]
   node src/cli.js historical-backtest <config-json>
   node src/cli.js price-coverage <config-json>
+  node src/cli.js portfolio-backtest <config-json>
   node src/cli.js live-scan <config-json>
   node src/cli.js reversal-scan <config-json>
   node src/cli.js short-scan <config-json>
@@ -248,6 +250,12 @@ async function main() {
         console.log("Price coverage check generado.");
         console.log(`Run dir: ${result.runDir}`);
         console.log(`Coverage JSON: ${result.coveragePath}`);
+        break;
+      }
+      case "portfolio-backtest": {
+        const filePath = requirePath(argument, "portfolio-backtest");
+        const result = runPortfolioBacktest(filePath);
+        console.log(result.consoleReport);
         break;
       }
       case "live-scan": {

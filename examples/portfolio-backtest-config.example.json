@@ -1,0 +1,19 @@
+{
+  "initialCapital": 3000,
+  "maxPositionPct": 35,
+  "maxBiotechPct": 70,
+  "maxSpeculativePct": 75,
+  "defaultPositionPctByRank": {
+    "A": 8,
+    "B": 4,
+    "manual-candidate": 4,
+    "watch": 0,
+    "discard": 0
+  },
+  "exitHorizonDays": 20,
+  "stopLossPct": -15,
+  "takeProfitPct": 30,
+  "dataProvider": "local-csv",
+  "signalsConfig": "historical_signals/waly-real-backtest-v2-config.json",
+  "outputDir": "backtests/portfolio-backtest"
+}
