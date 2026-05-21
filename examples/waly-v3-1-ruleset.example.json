@@ -1,0 +1,14 @@
+{
+  "rulesetName": "WALY v3.1",
+  "source": "portfolio-backtest parameter sweep",
+  "takeProfitPct": 30,
+  "stopLossPct": -10,
+  "exitHorizonDays": 20,
+  "defaultPositionPctByRank": {
+    "A": 8,
+    "B": 4,
+    "manual-candidate": 4,
+    "watch": 0,
+    "discard": 0
+  }
+}

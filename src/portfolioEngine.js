@@ -64,7 +64,8 @@ const IDEA_SIZE_PATHS = [
   "targetPositionPct",
   "positionPct",
   "allocationPct",
-  "riskBudgetPct"
+  "riskBudgetPct",
+  "maxSuggestedPositionPct"
 ];
 
 const SCAN_PATTERNS = [
@@ -888,6 +889,10 @@ function classifyIdeaAction(idea, checks, options) {
     return "no operar";
   }
 
+  if (!checks.hasPositiveSizing) {
+    return "vigilar";
+  }
+
   if (options.alreadyInPortfolio && !checks.allPass) {
     return "vigilar";
   }
@@ -909,10 +914,15 @@ function analyzeIdeaRisk(idea, context) {
   const blockers = [];
   const passes = [];
   const proposedPct = idea.proposedPct;
+  const hasPositiveSizing = isFiniteNumber(proposedPct) && proposedPct > 0;
   const existingTickerPct = getExistingTickerPct(idea.ticker, exposures);
 
   if (!capital.reliable) {
     blockers.push("capital/cash no fiable en settings");
+  }
+
+  if (!hasPositiveSizing) {
+    blockers.push(isFiniteNumber(proposedPct) ? "sizing 0: sin propuesta manual" : "sin sizing propuesto");
   }
 
   const positionCheck = evaluateLimit({
@@ -971,7 +981,7 @@ function analyzeIdeaRisk(idea, context) {
   }
 
   const allPass = blockers.length === 0 && passes.length > 0;
-  const action = classifyIdeaAction(idea, { allPass }, { alreadyInPortfolio });
+  const action = classifyIdeaAction(idea, { allPass, hasPositiveSizing }, { alreadyInPortfolio });
 
   return {
     action,
@@ -1066,7 +1076,9 @@ function renderPortfolioReview(analysis) {
     });
   }
 
-  const actionableOrders = ideas.filter((idea) => idea.risk.action === "preparar orden manual");
+  const actionableOrders = ideas.filter(
+    (idea) => idea.risk.action === "preparar orden manual" && isFiniteNumber(idea.risk.proposedPct) && idea.risk.proposedPct > 0
+  );
   const watchIdeas = ideas.filter((idea) => idea.risk.action === "vigilar");
   const reducePositions = riskWarnings.filter((warning) => warning.includes("supera max"));
   const openTickers = estimatedPositions.map((position) => position.ticker).filter(Boolean);
