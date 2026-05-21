@@ -13,6 +13,7 @@ const {
 const REQUIRED_PRICE_COLUMNS = ["date", "open", "high", "low", "close", "volume"];
 const DEFAULT_PRICE_FILE_PATTERN = "{ticker}.csv";
 const DEFAULT_OUTPUT_DIR = path.join(BACKTESTS_DIR, "portfolio-backtest");
+const ROOT_DIR = path.resolve(__dirname, "..");
 const VALID_TRADE_STATUSES = new Set(["closed", "partial", "pending", "skipped"]);
 
 function readJsonFile(filePath) {
@@ -77,6 +78,7 @@ function resolveConfigPath(configPath) {
 function resolveInputPath(inputPath, basePath) {
   const candidates = [
     path.resolve(path.dirname(basePath), inputPath),
+    path.resolve(ROOT_DIR, inputPath),
     path.resolve(process.cwd(), inputPath)
   ];
 
@@ -128,7 +130,7 @@ function normalizeConfig(config, configPath) {
 
   const outputDir = ensureBacktestsPath(
     config.outputDir
-      ? path.resolve(process.cwd(), config.outputDir)
+      ? path.resolve(path.isAbsolute(config.outputDir) ? config.outputDir : path.join(ROOT_DIR, config.outputDir))
       : DEFAULT_OUTPUT_DIR
   );
 
@@ -865,9 +867,27 @@ function buildConsoleReport(summary, paths) {
   ].join("\n");
 }
 
-function runPortfolioBacktest(configPathInput) {
+function buildTradesPayload(config, trades, generatedAt) {
+  return {
+    config: {
+      dataProvider: config.dataProvider,
+      exitHorizonDays: config.exitHorizonDays,
+      initialCapital: config.initialCapital,
+      maxBiotechPct: config.maxBiotechPct,
+      maxPositionPct: config.maxPositionPct,
+      maxSpeculativePct: config.maxSpeculativePct,
+      signalsConfig: config.signalsConfig,
+      stopLossPct: config.stopLossPct,
+      takeProfitPct: config.takeProfitPct
+    },
+    generatedAt,
+    trades
+  };
+}
+
+function simulatePortfolioBacktest(rawConfig, configPathInput) {
   const configPath = resolveConfigPath(configPathInput);
-  const config = normalizeConfig(readJsonFile(configPath), configPath);
+  const config = normalizeConfig(rawConfig, configPath);
   const state = loadState();
   const signalsConfig = loadSignalsConfig(config);
   const signals = loadSignals(signalsConfig.signalsPath);
@@ -894,41 +914,41 @@ function runPortfolioBacktest(configPathInput) {
     tradesPath: path.join(outputDir, "trades.json")
   };
   const generatedAt = new Date().toISOString();
-  const tradesPayload = {
-    config: {
-      dataProvider: config.dataProvider,
-      exitHorizonDays: config.exitHorizonDays,
-      initialCapital: config.initialCapital,
-      maxBiotechPct: config.maxBiotechPct,
-      maxPositionPct: config.maxPositionPct,
-      maxSpeculativePct: config.maxSpeculativePct,
-      signalsConfig: config.signalsConfig,
-      stopLossPct: config.stopLossPct,
-      takeProfitPct: config.takeProfitPct
-    },
-    generatedAt,
-    trades
-  };
   const summaryPayload = {
     ...summary,
     generatedAt,
     outputDir,
     signalsConfig: config.signalsConfig
   };
-  const summaryMarkdown = renderSummaryMarkdown(summaryPayload, trades, config);
-
-  writeJsonAtomic(paths.tradesPath, tradesPayload);
-  writeJsonAtomic(paths.summaryJsonPath, summaryPayload);
-  writeFileAtomic(paths.summaryMarkdownPath, `${summaryMarkdown}\n`);
 
   return {
-    consoleReport: buildConsoleReport(summaryPayload, paths),
+    config,
     paths,
     summary: summaryPayload,
     trades
   };
 }
 
+function runPortfolioBacktest(configPathInput) {
+  const configPath = resolveConfigPath(configPathInput);
+  const result = simulatePortfolioBacktest(readJsonFile(configPath), configPath);
+  const { config, paths, summary, trades } = result;
+  const tradesPayload = buildTradesPayload(config, trades, summary.generatedAt);
+  const summaryMarkdown = renderSummaryMarkdown(summary, trades, config);
+
+  writeJsonAtomic(paths.tradesPath, tradesPayload);
+  writeJsonAtomic(paths.summaryJsonPath, summary);
+  writeFileAtomic(paths.summaryMarkdownPath, `${summaryMarkdown}\n`);
+
+  return {
+    consoleReport: buildConsoleReport(summary, paths),
+    paths,
+    summary,
+    trades
+  };
+}
+
 module.exports = {
-  runPortfolioBacktest
+  runPortfolioBacktest,
+  simulatePortfolioBacktest
 };

@@ -1,0 +1,8 @@
+{
+  "initialCapital": 3000,
+  "signalsConfig": "historical_signals/waly-real-backtest-v2-config.json",
+  "dataProvider": "local-csv",
+  "takeProfitPct": [20, 30, 50],
+  "stopLossPct": [-10, -15, -20],
+  "exitHorizonDays": [10, 20, 30]
+}

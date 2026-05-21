@@ -8,6 +8,7 @@ const { runLiveUniverseScan } = require("./liveUniverseScanner");
 const { runMultibaggerLab } = require("./multibaggerLab");
 const { runOpportunityRouter } = require("./opportunityRouter");
 const { runPortfolioBacktest } = require("./portfolioBacktest");
+const { runPortfolioBacktestSweep } = require("./portfolioBacktestSweep");
 const { runPortfolioReview } = require("./portfolioEngine");
 const { runReversalScan } = require("./reversalRadar");
 const { generateReport } = require("./reporter");
@@ -31,6 +32,7 @@ function printUsage() {
   node src/cli.js historical-backtest <config-json>
   node src/cli.js price-coverage <config-json>
   node src/cli.js portfolio-backtest <config-json>
+  node src/cli.js portfolio-backtest-sweep <config-json>
   node src/cli.js live-scan <config-json>
   node src/cli.js reversal-scan <config-json>
   node src/cli.js short-scan <config-json>
@@ -255,6 +257,12 @@ async function main() {
       case "portfolio-backtest": {
         const filePath = requirePath(argument, "portfolio-backtest");
         const result = runPortfolioBacktest(filePath);
+        console.log(result.consoleReport);
+        break;
+      }
+      case "portfolio-backtest-sweep": {
+        const filePath = requirePath(argument, "portfolio-backtest-sweep");
+        const result = runPortfolioBacktestSweep(filePath);
         console.log(result.consoleReport);
         break;
       }
