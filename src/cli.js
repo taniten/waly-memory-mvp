@@ -4,6 +4,7 @@ const path = require("path");
 const { generateBacktestReport } = require("./backtestEngine");
 const { runDailyCockpit } = require("./dailyCockpit");
 const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktestEngine");
+const { runHistoricalResearchLab } = require("./historicalResearchLab");
 const { initData } = require("./initData");
 const { runLiveUniverseScan } = require("./liveUniverseScanner");
 const { runMultibaggerLab } = require("./multibaggerLab");
@@ -31,6 +32,7 @@ function printUsage() {
   node src/cli.js report
   node src/cli.js backtest [--dry-run]
   node src/cli.js historical-backtest <config-json>
+  node src/cli.js historical-research-lab <config-json>
   node src/cli.js price-coverage <config-json>
   node src/cli.js portfolio-backtest <config-json>
   node src/cli.js portfolio-backtest-sweep <config-json>
@@ -244,6 +246,12 @@ async function main() {
         console.log(`Partial: ${result.summary.partialSignals}`);
         console.log(`Pending: ${result.summary.pendingSignals}`);
         console.log(`Errores: ${result.summary.errorCount}`);
+        break;
+      }
+      case "historical-research-lab": {
+        const filePath = requirePath(argument, "historical-research-lab");
+        const result = await runHistoricalResearchLab(filePath);
+        console.log(result.consoleReport);
         break;
       }
       case "price-coverage": {
