@@ -137,17 +137,20 @@ function normalizeConfig(configPathInput) {
     configPath,
     dataProvider: config.dataProvider,
     endDate: config.endDate,
+    mondayReviewFile: isNonEmptyString(config.mondayReviewFile) ? config.mondayReviewFile : "monday-review.md",
     outputDir: assertAllowedDirectory(resolveFromRoot(config.outputDir || ALLOWED_OUTPUTS.outputDir), ALLOWED_OUTPUTS.outputDir, "outputDir"),
     priceOutputDir: assertAllowedDirectory(
       resolveFromRoot(config.priceOutputDir || ALLOWED_OUTPUTS.priceOutputDir),
       ALLOWED_OUTPUTS.priceOutputDir,
       "priceOutputDir"
     ),
-    signalOutputDir: assertAllowedDirectory(
-      resolveFromRoot(config.signalOutputDir || ALLOWED_OUTPUTS.signalOutputDir),
-      ALLOWED_OUTPUTS.signalOutputDir,
-      "signalOutputDir"
-    ),
+    signalOutputDir: config.signalOutputDir === null
+      ? null
+      : assertAllowedDirectory(
+          resolveFromRoot(config.signalOutputDir || ALLOWED_OUTPUTS.signalOutputDir),
+          ALLOWED_OUTPUTS.signalOutputDir,
+          "signalOutputDir"
+        ),
     startDate: config.startDate,
     universe
   };
@@ -757,7 +760,7 @@ function renderConsoleReport(result) {
   lines.push("WALY Historical Research Lab generado.");
   lines.push(`Output dir: ${formatRelative(result.paths.outputDir)}`);
   lines.push(`Price dir: ${formatRelative(result.paths.priceOutputDir)}`);
-  lines.push(`Signal dir: ${formatRelative(result.paths.signalOutputDir)}`);
+  lines.push(`Signal dir: ${result.paths.signalOutputDir ? formatRelative(result.paths.signalOutputDir) : "disabled"}`);
   lines.push(`Tickers descargados: ${result.coverage.filter((item) => item.errors.length === 0).length}/${result.coverage.length}`);
   lines.push(`Senales generadas: ${result.signals.length}`);
   lines.push("Top resultados:");
@@ -795,7 +798,9 @@ async function runHistoricalResearchLab(configPathInput) {
 
   fs.mkdirSync(config.outputDir, { recursive: true });
   fs.mkdirSync(config.priceOutputDir, { recursive: true });
-  fs.mkdirSync(config.signalOutputDir, { recursive: true });
+  if (config.signalOutputDir) {
+    fs.mkdirSync(config.signalOutputDir, { recursive: true });
+  }
 
   for (const ticker of config.universe) {
     try {
@@ -845,12 +850,12 @@ async function runHistoricalResearchLab(configPathInput) {
     backtestSummaryPath: path.join(config.outputDir, "backtest-summary.json"),
     coveragePath: path.join(config.outputDir, "coverage.json"),
     generatedSignalsPath: path.join(config.outputDir, "generated-signals.json"),
-    mondayReviewPath: path.join(config.outputDir, "monday-review.md"),
+    mondayReviewPath: path.join(config.outputDir, config.mondayReviewFile),
     outputDir: config.outputDir,
     parameterSweepPath: path.join(config.outputDir, "parameter-sweep.json"),
     priceOutputDir: config.priceOutputDir,
     signalOutputDir: config.signalOutputDir,
-    signalMirrorPath: path.join(config.signalOutputDir, "generated-signals.json"),
+    signalMirrorPath: config.signalOutputDir ? path.join(config.signalOutputDir, "generated-signals.json") : null,
     summaryPath: path.join(config.outputDir, "summary.md")
   };
   const signalPayload = {
@@ -880,7 +885,9 @@ async function runHistoricalResearchLab(configPathInput) {
     coverage
   });
   writeJsonFile(paths.generatedSignalsPath, signalPayload);
-  writeJsonFile(paths.signalMirrorPath, signalPayload);
+  if (paths.signalMirrorPath) {
+    writeJsonFile(paths.signalMirrorPath, signalPayload);
+  }
   writeJsonFile(paths.backtestSummaryPath, {
     generatedAt,
     results: backtestResults,
