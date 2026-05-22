@@ -54,8 +54,8 @@ const SCORE_PATHS = [
   "returnScore"
 ];
 
-function ensureOutputDir() {
-  const resolved = path.resolve(OUTPUT_DIR);
+function ensureOutputDir(outputDir = OUTPUT_DIR) {
+  const resolved = path.resolve(outputDir);
   const relative = path.relative(BACKTESTS_DIR, resolved);
 
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
@@ -962,21 +962,25 @@ function renderConsoleReport(result) {
   const manualCandidates = uniqueByTicker(result.routedIdeas.filter((idea) => idea.decision === "manual-candidate"));
   const watch = uniqueByTicker(result.routedIdeas.filter((idea) => idea.decision === "watch"));
   const blockers = [...new Set(result.routedIdeas.flatMap((idea) => idea.blockers))];
+  const outputDir = result.paths && result.paths.outputDir ? formatRelative(result.paths.outputDir) : "no-write";
+  const routedIdeasPath = result.paths && result.paths.routedIdeasPath ? formatRelative(result.paths.routedIdeasPath) : "no-write";
+  const summaryPath = result.paths && result.paths.summaryPath ? formatRelative(result.paths.summaryPath) : "no-write";
 
   return [
     "WALY Opportunity Router MVP generado.",
-    `Output dir: ${formatRelative(result.paths.outputDir)}`,
+    `Output dir: ${outputDir}`,
     `Routed ideas: ${result.routedIdeas.length}`,
     `Operables: ${operable.length ? operable.map((idea) => idea.ticker).join(", ") : "ninguna"}`,
     `Manual candidates: ${manualCandidates.length ? manualCandidates.map((idea) => idea.ticker).join(", ") : "ninguna"}`,
     `Watch: ${watch.length ? watch.map((idea) => idea.ticker).join(", ") : "ninguna"}`,
     `Bloqueos: ${blockers.length ? blockers.slice(0, 5).join(" | ") : "ninguno"}`,
-    `routedIdeas.json: ${formatRelative(result.paths.routedIdeasPath)}`,
-    `summary.md: ${formatRelative(result.paths.summaryPath)}`
+    `routedIdeas.json: ${routedIdeasPath}`,
+    `summary.md: ${summaryPath}`
   ].join("\n");
 }
 
-function runOpportunityRouter() {
+function runOpportunityRouter(options = {}) {
+  const { outputDir = OUTPUT_DIR, writeOutputs = true } = options;
   const settings = readJson("settings.json");
   const positions = readJson("positions.json");
   const watchlist = readJson("watchlist.json");
@@ -1004,23 +1008,25 @@ function runOpportunityRouter() {
     routedIdeas,
     sourceReads
   });
-  const outputDir = ensureOutputDir();
-  const routedIdeasPath = writeJsonFile(outputDir, "routedIdeas.json", {
-    generatedAt: new Date().toISOString(),
-    mode: "read-only",
-    notes: [
-      "No ejecuta ordenes.",
-      "No usa red.",
-      "No usa IBKR ni Binance.",
-      "Multibagger-lab se usa solo como evidencia historica."
-    ],
-    sourceCounts: countBySource(routedIdeas),
-    routedIdeas
-  });
-  const summaryPath = writeTextFile(outputDir, "summary.md", summaryMarkdown);
+  const resolvedOutputDir = writeOutputs ? ensureOutputDir(outputDir) : path.resolve(outputDir);
+  const routedIdeasPath = writeOutputs
+    ? writeJsonFile(resolvedOutputDir, "routedIdeas.json", {
+        generatedAt: new Date().toISOString(),
+        mode: "read-only",
+        notes: [
+          "No ejecuta ordenes.",
+          "No usa red.",
+          "No usa IBKR ni Binance.",
+          "Multibagger-lab se usa solo como evidencia historica."
+        ],
+        sourceCounts: countBySource(routedIdeas),
+        routedIdeas
+      })
+    : null;
+  const summaryPath = writeOutputs ? writeTextFile(resolvedOutputDir, "summary.md", summaryMarkdown) : null;
   const result = {
     paths: {
-      outputDir,
+      outputDir: resolvedOutputDir,
       routedIdeasPath,
       summaryPath
     },

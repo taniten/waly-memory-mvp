@@ -2,6 +2,7 @@
 
 const path = require("path");
 const { generateBacktestReport } = require("./backtestEngine");
+const { runDailyCockpit } = require("./dailyCockpit");
 const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktestEngine");
 const { initData } = require("./initData");
 const { runLiveUniverseScan } = require("./liveUniverseScanner");
@@ -37,6 +38,7 @@ function printUsage() {
   node src/cli.js reversal-scan <config-json>
   node src/cli.js short-scan <config-json>
   node src/cli.js multibagger-lab <config-json>
+  node src/cli.js daily-cockpit
   node src/cli.js portfolio-review
   node src/cli.js opportunity-router
   node src/cli.js sync-universe
@@ -309,6 +311,11 @@ async function main() {
         console.log(`Multibaggers: ${result.summary.multibaggerCount}`);
         console.log(`hit100: ${result.summary.hit100 === null ? "n/d" : `${result.summary.hit100}%`}`);
         console.log(`Errores: ${result.summary.errorCount}`);
+        break;
+      }
+      case "daily-cockpit": {
+        const result = await runDailyCockpit();
+        console.log(result.consoleReport);
         break;
       }
       case "portfolio-review": {
