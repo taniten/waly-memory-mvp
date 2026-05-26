@@ -15,6 +15,7 @@ const { runPortfolioReview } = require("./portfolioEngine");
 const { runReversalScan } = require("./reversalRadar");
 const { generateReport } = require("./reporter");
 const { runShortScan } = require("./shortRadar");
+const { runSignalQualityGate } = require("./signalQualityGate");
 const { syncUniverse } = require("./universeEngine");
 const {
   addOutcomeEntry,
@@ -33,6 +34,7 @@ function printUsage() {
   node src/cli.js backtest [--dry-run]
   node src/cli.js historical-backtest <config-json>
   node src/cli.js historical-research-lab <config-json>
+  node src/cli.js signal-quality-gate
   node src/cli.js price-coverage <config-json>
   node src/cli.js portfolio-backtest <config-json>
   node src/cli.js portfolio-backtest-sweep <config-json>
@@ -251,6 +253,11 @@ async function main() {
       case "historical-research-lab": {
         const filePath = requirePath(argument, "historical-research-lab");
         const result = await runHistoricalResearchLab(filePath);
+        console.log(result.consoleReport);
+        break;
+      }
+      case "signal-quality-gate": {
+        const result = runSignalQualityGate();
         console.log(result.consoleReport);
         break;
       }
