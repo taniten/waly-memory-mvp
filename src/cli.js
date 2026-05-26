@@ -12,6 +12,7 @@ const { runOpportunityRouter } = require("./opportunityRouter");
 const { runPortfolioBacktest } = require("./portfolioBacktest");
 const { runPortfolioBacktestSweep } = require("./portfolioBacktestSweep");
 const { runPortfolioReview } = require("./portfolioEngine");
+const { runQualityGateBacktest } = require("./qualityGateBacktest");
 const { runReversalScan } = require("./reversalRadar");
 const { generateReport } = require("./reporter");
 const { runShortScan } = require("./shortRadar");
@@ -35,6 +36,7 @@ function printUsage() {
   node src/cli.js historical-backtest <config-json>
   node src/cli.js historical-research-lab <config-json>
   node src/cli.js signal-quality-gate
+  node src/cli.js quality-gate-backtest
   node src/cli.js price-coverage <config-json>
   node src/cli.js portfolio-backtest <config-json>
   node src/cli.js portfolio-backtest-sweep <config-json>
@@ -258,6 +260,11 @@ async function main() {
       }
       case "signal-quality-gate": {
         const result = runSignalQualityGate();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "quality-gate-backtest": {
+        const result = runQualityGateBacktest();
         console.log(result.consoleReport);
         break;
       }
