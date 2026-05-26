@@ -17,6 +17,7 @@ const { runReversalScan } = require("./reversalRadar");
 const { generateReport } = require("./reporter");
 const { runShortScan } = require("./shortRadar");
 const { runSignalQualityGate } = require("./signalQualityGate");
+const { runSocialInbox } = require("./socialInbox");
 const { runSocialRadar } = require("./socialRadar");
 const { runSocialSourceTracker } = require("./socialSourceTracker");
 const { syncUniverse } = require("./universeEngine");
@@ -39,6 +40,7 @@ function printUsage() {
   node src/cli.js historical-research-lab <config-json>
   node src/cli.js signal-quality-gate
   node src/cli.js quality-gate-backtest
+  node src/cli.js social-inbox
   node src/cli.js social-radar
   node src/cli.js social-source-tracker
   node src/cli.js price-coverage <config-json>
@@ -269,6 +271,11 @@ async function main() {
       }
       case "quality-gate-backtest": {
         const result = runQualityGateBacktest();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "social-inbox": {
+        const result = runSocialInbox();
         console.log(result.consoleReport);
         break;
       }

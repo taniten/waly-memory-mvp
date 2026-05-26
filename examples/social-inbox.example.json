@@ -1,0 +1,66 @@
+{
+  "generatedAt": "2026-05-26",
+  "mode": "example-only",
+  "entries": [
+    {
+      "sourceId": "kraken-stock-research",
+      "platform": "X",
+      "handle": "KrakenStockResearch",
+      "ticker": "DEMO",
+      "date": "2026-05-26",
+      "observedPrice": 12.5,
+      "thesis": "Example manually pasted early small-cap mention. Needs WALY validation before any use.",
+      "catalyst": "Possible product/catalyst discussion that must be verified by WALY hard-data layer.",
+      "catalystDate": null,
+      "url": "https://x.com/KrakenStockResearch",
+      "rawText": "DEMO getting early attention. Need catalyst verification, liquidity check and price/volume confirmation before any decision.",
+      "confidence": "medium",
+      "notes": "Manual example. No BUY direct."
+    },
+    {
+      "sourceId": "manual-biotech-radar",
+      "platform": "other",
+      "handle": "manual-biotech-radar",
+      "ticker": "TEST",
+      "date": "2026-05-25",
+      "observedPrice": 8.4,
+      "thesis": "Example biotech readout idea with a concrete event date.",
+      "catalyst": "Phase 2 readout expected in June.",
+      "catalystDate": "2026-06-15",
+      "url": null,
+      "rawText": "TEST has a June Phase 2 readout and price is still below prior catalyst run-up. Needs volume confirmation.",
+      "confidence": "high",
+      "notes": "Clean example with registered source and catalyst."
+    },
+    {
+      "sourceId": "unknown-hype-account",
+      "platform": "X",
+      "handle": "unknown-hype-account",
+      "ticker": "MOON",
+      "date": "2026-05-26",
+      "observedPrice": null,
+      "thesis": "Guaranteed rocket, no details.",
+      "catalyst": "",
+      "catalystDate": null,
+      "url": "https://x.com/example",
+      "rawText": "MOON is going 100x soon, do not miss it.",
+      "confidence": "high",
+      "notes": "Intentional bad example: unregistered source, no price, no catalyst, hype language."
+    },
+    {
+      "sourceId": "manual-biotech-radar",
+      "platform": "other",
+      "handle": "manual-biotech-radar",
+      "ticker": "",
+      "date": "",
+      "observedPrice": 4.2,
+      "thesis": "Example incomplete paste.",
+      "catalyst": "Possible data update.",
+      "catalystDate": null,
+      "url": null,
+      "rawText": "Missing ticker and date.",
+      "confidence": "low",
+      "notes": "Intentional validation failure."
+    }
+  ]
+}
