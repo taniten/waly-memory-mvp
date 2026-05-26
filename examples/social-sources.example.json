@@ -1,0 +1,54 @@
+{
+  "generatedAt": "2026-05-26",
+  "mode": "example-only",
+  "sources": [
+    {
+      "sourceId": "kraken-stock-research",
+      "displayName": "KrakenStockResearch",
+      "platform": "X",
+      "handle": "KrakenStockResearch",
+      "url": "https://x.com/KrakenStockResearch",
+      "specialty": "smallcap",
+      "reliabilityScore": 50,
+      "status": "unknown",
+      "firstSeen": "2026-05-26",
+      "lastSeen": "2026-05-26",
+      "notes": "Manual seed only. Track as early-discovery source until hits/misses are validated. Never promote to BUY source automatically.",
+      "historicalHits": 0,
+      "historicalMisses": 0,
+      "pendingMentions": 1
+    },
+    {
+      "sourceId": "manual-biotech-radar",
+      "displayName": "Manual Biotech Radar",
+      "platform": "other",
+      "handle": "manual-biotech-radar",
+      "url": null,
+      "specialty": "biotech",
+      "reliabilityScore": 58,
+      "status": "active",
+      "firstSeen": "2026-04-01",
+      "lastSeen": "2026-05-20",
+      "notes": "Example local source with a small validated sample. Used for discovery/watchlist only.",
+      "historicalHits": 2,
+      "historicalMisses": 1,
+      "pendingMentions": 1
+    },
+    {
+      "sourceId": "stale-hype-feed",
+      "displayName": "Stale Hype Feed",
+      "platform": "forum",
+      "handle": "stale-hype-feed",
+      "url": null,
+      "specialty": "other",
+      "reliabilityScore": 35,
+      "status": "unknown",
+      "firstSeen": "2025-11-01",
+      "lastSeen": "2026-01-15",
+      "notes": "Example source that should decay or become inactive because the last useful observation is old.",
+      "historicalHits": 1,
+      "historicalMisses": 4,
+      "pendingMentions": 0
+    }
+  ]
+}
