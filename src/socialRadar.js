@@ -13,7 +13,8 @@ const EXAMPLE_MENTIONS_PATH = path.join(EXAMPLES_DIR, "social-mentions.example.j
 const WATCHLIST_PATH = path.join(DATA_DIR, "watchlist.json");
 const TRACKER_DIR = path.join(BACKTESTS_DIR, "social-source-tracker");
 const TRACKER_SOURCES_PATH = path.join(TRACKER_DIR, "sources-scored.json");
-const TRACKER_MENTIONS_PATH = path.join(TRACKER_DIR, "mentions-scored.json");
+const INBOX_DIR = path.join(BACKTESTS_DIR, "social-inbox");
+const INBOX_MENTIONS_PATH = path.join(INBOX_DIR, "normalized-mentions.json");
 const LATEST_PATH = path.join(OUTPUT_DIR, "latest.json");
 const SUMMARY_PATH = path.join(OUTPUT_DIR, "summary.md");
 const ACTIONS = ["ignore", "research", "add_to_watchlist", "review_with_waly"];
@@ -165,6 +166,17 @@ function normalizeMentionFromTracker(mention) {
   };
 }
 
+function normalizeMentionFromInbox(mention) {
+  return {
+    ...normalizeMentionFromExample(mention),
+    inboxErrors: Array.isArray(mention.errors) ? mention.errors : [],
+    inboxWarnings: Array.isArray(mention.warnings) ? mention.warnings : [],
+    isValidForRadar: mention.isValidForRadar === true,
+    reviewStatus: mention.reviewStatus || "pending",
+    sourceDisplayName: mention.sourceDisplayName || null
+  };
+}
+
 function buildSourceIndex(exampleSources, trackerSourcesPayload) {
   const index = new Map();
 
@@ -189,7 +201,7 @@ function buildSourceIndex(exampleSources, trackerSourcesPayload) {
   return index;
 }
 
-function buildMentionList(exampleMentions, trackerMentionsPayload) {
+function buildMentionListFromExamples(exampleMentions) {
   const byId = new Map();
 
   exampleMentions.forEach((mention) => {
@@ -199,18 +211,43 @@ function buildMentionList(exampleMentions, trackerMentionsPayload) {
     }
   });
 
-  const trackerMentions = trackerMentionsPayload && Array.isArray(trackerMentionsPayload.scoredMentions)
-    ? trackerMentionsPayload.scoredMentions
+  return [...byId.values()];
+}
+
+function buildMentionListFromInbox(inboxPayload) {
+  const mentions = inboxPayload && Array.isArray(inboxPayload.normalizedMentions)
+    ? inboxPayload.normalizedMentions
     : [];
 
-  trackerMentions.forEach((mention) => {
-    const normalized = normalizeMentionFromTracker(mention);
-    if (normalized.mentionId) {
-      byId.set(normalized.mentionId, normalized);
-    }
-  });
+  return mentions
+    .map(normalizeMentionFromInbox)
+    .filter((mention) => mention.mentionId);
+}
 
-  return [...byId.values()];
+function selectMentionInputs(inboxPayload, exampleMentions) {
+  if (inboxPayload && Array.isArray(inboxPayload.normalizedMentions)) {
+    return {
+      inputMode: "social-inbox",
+      inputPath: INBOX_MENTIONS_PATH,
+      inputSummary: {
+        examplesFallbackMentions: 0,
+        socialInboxMentions: inboxPayload.normalizedMentions.length,
+        used: "social-inbox"
+      },
+      mentions: buildMentionListFromInbox(inboxPayload)
+    };
+  }
+
+  return {
+    inputMode: "examples fallback",
+    inputPath: EXAMPLE_MENTIONS_PATH,
+    inputSummary: {
+      examplesFallbackMentions: exampleMentions.length,
+      socialInboxMentions: 0,
+      used: "examples fallback"
+    },
+    mentions: buildMentionListFromExamples(exampleMentions)
+  };
 }
 
 function buildWatchlistIndex(watchlistPayload) {
@@ -238,6 +275,10 @@ function scoreMention(mention, source, watchlistIndex) {
   const verifiableThesis = looksVerifiable(mention.thesis);
   const hypeWithoutData = looksLikeHypeWithoutData(mention);
   let socialScore = 0;
+
+  if (mention.isValidForRadar === false && Array.isArray(mention.inboxErrors)) {
+    mention.inboxErrors.forEach((error) => riskFlags.push(`inbox: ${error}`));
+  }
 
   if (sourceStatus === "banned") {
     riskFlags.push("fuente banned");
@@ -306,7 +347,9 @@ function scoreMention(mention, source, watchlistIndex) {
 
   let suggestedAction = "ignore";
   const catalystVerifiable = explicitCatalyst && datedCatalyst;
-  if (mention.verdict && mention.verdict !== "pending") {
+  if (mention.isValidForRadar === false) {
+    suggestedAction = "ignore";
+  } else if (mention.verdict && mention.verdict !== "pending") {
     riskFlags.push(`verdict ${mention.verdict}: auditoria historica, no candidato actual`);
     suggestedAction = "ignore";
   } else if (sourceStatus === "banned") {
@@ -359,7 +402,7 @@ function renderRow(cells) {
   return `| ${cells.join(" | ")} |`;
 }
 
-function renderSummary({ generatedAt, mentions, sources }) {
+function renderSummary({ generatedAt, inputSummary, mentions, sources }) {
   const ranked = [...mentions].sort((left, right) =>
     right.socialScore - left.socialScore ||
     left.ticker.localeCompare(right.ticker) ||
@@ -380,6 +423,9 @@ function renderSummary({ generatedAt, mentions, sources }) {
   lines.push("Modo: read-only local; no red, no scraping, no login, no paywalls, no opera.");
   lines.push("");
   lines.push("## 1. Total de menciones evaluadas");
+  lines.push(`- Input usado: ${inputSummary.used}`);
+  lines.push(`- Menciones desde social-inbox: ${inputSummary.socialInboxMentions}`);
+  lines.push(`- Menciones desde examples fallback: ${inputSummary.examplesFallbackMentions}`);
   lines.push(`- Total: ${mentions.length}`);
   lines.push(`- review_with_waly: ${mentions.filter((item) => item.suggestedAction === "review_with_waly").length}`);
   lines.push(`- add_to_watchlist: ${mentions.filter((item) => item.suggestedAction === "add_to_watchlist").length}`);
@@ -448,6 +494,7 @@ function renderConsoleReport(result) {
 
   return [
     "WALY Social Radar generado.",
+    `Input usado: ${result.inputSummary.used} | inbox=${result.inputSummary.socialInboxMentions} | examples=${result.inputSummary.examplesFallbackMentions}`,
     `Menciones evaluadas: ${result.mentions.length}`,
     `Acciones: ${ACTIONS.map((action) => `${action}=${result.actionCounts[action] || 0}`).join(" | ")}`,
     `Watchlist matches: ${result.watchlistMatchCounts.true || 0}`,
@@ -463,9 +510,10 @@ function runSocialRadar() {
   const mentionsPayload = readJson(EXAMPLE_MENTIONS_PATH);
   const watchlistPayload = readJson(WATCHLIST_PATH);
   const trackerSourcesPayload = readJsonIfExists(TRACKER_SOURCES_PATH);
-  const trackerMentionsPayload = readJsonIfExists(TRACKER_MENTIONS_PATH);
+  const inboxPayload = readJsonIfExists(INBOX_MENTIONS_PATH);
   const sourceIndex = buildSourceIndex(sourcesPayload.sources || [], trackerSourcesPayload);
-  const mentionInputs = buildMentionList(mentionsPayload.mentions || [], trackerMentionsPayload);
+  const mentionSelection = selectMentionInputs(inboxPayload, mentionsPayload.mentions || []);
+  const mentionInputs = mentionSelection.mentions;
   const watchlistIndex = buildWatchlistIndex(watchlistPayload);
   const generatedAt = new Date().toISOString();
   const mentions = mentionInputs
@@ -480,8 +528,10 @@ function runSocialRadar() {
   const payload = {
     generatedAt,
     inputs: {
-      mentionsPath: formatRelative(EXAMPLE_MENTIONS_PATH),
-      optionalTrackerMentionsPath: fs.existsSync(TRACKER_MENTIONS_PATH) ? formatRelative(TRACKER_MENTIONS_PATH) : null,
+      fallbackMentionsPath: formatRelative(EXAMPLE_MENTIONS_PATH),
+      mentionsPath: formatRelative(mentionSelection.inputPath),
+      mentionsSource: mentionSelection.inputMode,
+      optionalSocialInboxPath: fs.existsSync(INBOX_MENTIONS_PATH) ? formatRelative(INBOX_MENTIONS_PATH) : null,
       optionalTrackerSourcesPath: fs.existsSync(TRACKER_SOURCES_PATH) ? formatRelative(TRACKER_SOURCES_PATH) : null,
       sourcesPath: formatRelative(EXAMPLE_SOURCES_PATH),
       watchlistPath: formatRelative(WATCHLIST_PATH)
@@ -495,11 +545,13 @@ function runSocialRadar() {
       "Social Radar solo propone discovery/revision."
     ],
     actionCounts,
+    inputSummary: mentionSelection.inputSummary,
     mentions,
     watchlistMatchCounts
   };
   const markdown = renderSummary({
     generatedAt,
+    inputSummary: mentionSelection.inputSummary,
     mentions,
     sources: sourceIndex
   });
@@ -511,6 +563,7 @@ function runSocialRadar() {
     ...payload,
     consoleReport: renderConsoleReport({
       actionCounts,
+      inputSummary: mentionSelection.inputSummary,
       mentions,
       watchlistMatchCounts
     }),
