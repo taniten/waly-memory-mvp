@@ -337,6 +337,52 @@ function bucketAnalysis(rows) {
   };
 }
 
+function catalystAnalysis(rows) {
+  const withCatalyst = rows.filter((row) => row.hasKnownCatalyst);
+  const withoutCatalyst = rows.filter((row) => !row.hasKnownCatalyst);
+  const highScoreWithCatalyst = withCatalyst.filter((row) => row.totalScore >= 35);
+  const highScoreWithoutCatalyst = withoutCatalyst.filter((row) => row.totalScore >= 35);
+
+  return {
+    byPresence: {
+      withCatalyst: {
+        all: stats(withCatalyst),
+        test: stats(splitRows(withCatalyst, "test")),
+        train: stats(splitRows(withCatalyst, "train"))
+      },
+      withoutCatalyst: {
+        all: stats(withoutCatalyst),
+        test: stats(splitRows(withoutCatalyst, "test")),
+        train: stats(splitRows(withoutCatalyst, "train"))
+      }
+    },
+    byType: groupBy(withCatalyst, (row) => row.catalystType || "unknown").map((group) => ({
+      catalystType: group.key,
+      stats: group.stats,
+      test: stats(splitRows(group.rows, "test")),
+      train: stats(splitRows(group.rows, "train"))
+    })),
+    highScoreComparison: {
+      spread30d: (() => {
+        const withStats = stats(highScoreWithCatalyst);
+        const withoutStats = stats(highScoreWithoutCatalyst);
+        return withStats.avg30d !== null && withoutStats.avg30d !== null
+          ? round(withStats.avg30d - withoutStats.avg30d, 2)
+          : null;
+      })(),
+      withCatalyst: stats(highScoreWithCatalyst),
+      withoutCatalyst: stats(highScoreWithoutCatalyst)
+    },
+    improvesEdge: (() => {
+      const withStats = stats(withCatalyst);
+      const withoutStats = stats(withoutCatalyst);
+      return withStats.avg30d !== null && withoutStats.avg30d !== null
+        ? withStats.avg30d > withoutStats.avg30d
+        : null;
+    })()
+  };
+}
+
 function yearlyStability(rows) {
   return groupBy(rows, yearBucket).map((group) => ({
     year: group.key,
@@ -470,7 +516,7 @@ function trainTestComparison(rows) {
   };
 }
 
-function evidence({ baseline, buckets, deciles, missingCatalystPct, signalTypes, tickerRisk }) {
+function evidence({ baseline, buckets, catalyst, deciles, missingCatalystPct, signalTypes, tickerRisk }) {
   const against = [];
   const favor = [];
   const bestRelVol = buckets.relVol.slice().sort((left, right) => (right.stats.avg30d || -Infinity) - (left.stats.avg30d || -Infinity))[0];
@@ -505,6 +551,18 @@ function evidence({ baseline, buckets, deciles, missingCatalystPct, signalTypes,
 
   if (missingCatalystPct > 80) {
     against.push(`${missingCatalystPct}% de senales sin catalyst historico explicito`);
+  }
+
+  if (catalyst.byPresence.withCatalyst.all.count > 0) {
+    const withAvg = catalyst.byPresence.withCatalyst.all.avg30d;
+    const withoutAvg = catalyst.byPresence.withoutCatalyst.all.avg30d;
+    if (withAvg !== null && withoutAvg !== null && withAvg > withoutAvg) {
+      favor.push(`senales con catalyst superan sin catalyst en avg30 (${withAvg}% vs ${withoutAvg}%)`);
+    } else if (withAvg !== null && withoutAvg !== null) {
+      against.push(`senales con catalyst no superan sin catalyst en avg30 (${withAvg}% vs ${withoutAvg}%)`);
+    }
+  } else {
+    against.push("no hay senales con catalyst historico valido para comparar");
   }
 
   if (tickerRisk.top3PositiveContributionPct !== null && tickerRisk.top3PositiveContributionPct > 35) {
@@ -616,12 +674,13 @@ function buildPayload() {
   const trainTest = trainTestComparison(replayRows);
   const signalTypes = signalTypeEdge(replayRows);
   const buckets = bucketAnalysis(replayRows);
+  const catalyst = catalystAnalysis(replayRows);
   const yearly = yearlyStability(replayRows);
   const tickerRisk = tickerConcentration(replayRows);
   const baseline = randomBaseline(replayRows);
   const failures = failureModes(replayRows);
   const missingCatalystCount = replayRows.filter((row) =>
-    (row.missingData || []).some((item) => /historical catalyst/i.test(item))
+    !row.hasKnownCatalyst
   ).length;
   const missingCatalystPct = percentage(missingCatalystCount, replayRows.length) || 0;
   const verdict = finalVerdict({
@@ -634,6 +693,7 @@ function buildPayload() {
   const evidenceSet = evidence({
     baseline,
     buckets,
+    catalyst,
     deciles: decileAnalysis,
     missingCatalystPct,
     signalTypes,
@@ -644,6 +704,7 @@ function buildPayload() {
   return {
     baseline,
     buckets,
+    catalyst,
     confirmations: [
       "No opera.",
       "No usa IBKR.",
@@ -684,6 +745,7 @@ function buildPayload() {
     signalTypes,
     summary: {
       aCandidateCount: replayRows.filter((row) => row.classification === "A_candidate").length,
+      catalystSignals: replayRows.filter((row) => row.hasKnownCatalyst).length,
       evaluatedSignals: replayRows.length,
       missingCatalystCount,
       missingCatalystPct,
@@ -794,6 +856,25 @@ function renderSummary(payload) {
   lines.push(`- Monotonicidad retorno: ${payload.deciles.monotonicity.returnMonotonic ? "si" : "no"}`);
   lines.push(`- Monotonicidad drawdown: ${payload.deciles.monotonicity.drawdownMonotonic ? "si" : "no"}`);
   lines.push("");
+  lines.push("## Catalyst historico valido vs sin catalyst");
+  lines.push(`- Con catalyst: ${renderStats(payload.catalyst.byPresence.withCatalyst.all)}`);
+  lines.push(`- Sin catalyst: ${renderStats(payload.catalyst.byPresence.withoutCatalyst.all)}`);
+  lines.push(`- High score con catalyst vs sin catalyst spread 30d: ${payload.catalyst.highScoreComparison.spread30d === null ? "n/d" : `${payload.catalyst.highScoreComparison.spread30d}%`}`);
+  lines.push(`- Mejora edge por catalyst: ${payload.catalyst.improvesEdge === null ? "n/d" : payload.catalyst.improvesEdge ? "si" : "no"}`);
+  lines.push("");
+  lines.push("## Catalyst por tipo");
+  lines.push(payload.catalyst.byType.length
+    ? renderTable(
+      ["Tipo", "All", "Train", "Test"],
+      payload.catalyst.byType.map((row) => [
+        row.catalystType,
+        renderStats(row.stats),
+        renderStats(row.train),
+        renderStats(row.test)
+      ])
+    )
+    : "- Sin muestra con catalyst historico valido.");
+  lines.push("");
   lines.push("## Que componente si aporta");
   const useful = payload.signalTypes.filter((row) => row.recommendation === "seguir");
   lines.push(useful.length ? useful.map((row) => `- ${row.signalType}: ${renderStats(row.stats)}`).join("\n") : "- Ningun componente/signal type queda validado como edge fuerte.");
@@ -864,6 +945,28 @@ function renderSignalTypeEdge(payload) {
     "## Dollar volume buckets",
     renderBucketTable(payload.buckets.dollarVolume, "Bucket"),
     "",
+    "## Catalyst presence",
+    renderTable(
+      ["Grupo", "All", "Train", "Test"],
+      [
+        ["with_catalyst", renderStats(payload.catalyst.byPresence.withCatalyst.all), renderStats(payload.catalyst.byPresence.withCatalyst.train), renderStats(payload.catalyst.byPresence.withCatalyst.test)],
+        ["without_catalyst", renderStats(payload.catalyst.byPresence.withoutCatalyst.all), renderStats(payload.catalyst.byPresence.withoutCatalyst.train), renderStats(payload.catalyst.byPresence.withoutCatalyst.test)]
+      ]
+    ),
+    "",
+    "## Catalyst by type",
+    payload.catalyst.byType.length
+      ? renderTable(
+        ["Tipo", "All", "Train", "Test"],
+        payload.catalyst.byType.map((row) => [
+          row.catalystType,
+          renderStats(row.stats),
+          renderStats(row.train),
+          renderStats(row.test)
+        ])
+      )
+      : "- Sin muestra con catalyst historico valido.",
+    "",
     "## Year/regime",
     renderTable(
       ["Year", "Stats"],
@@ -931,6 +1034,9 @@ function renderConsoleReport(payload, paths) {
     "WALY Edge Validation Engine v1 generado.",
     `Verdict: ${payload.verdict}`,
     `Signals evaluadas: ${payload.summary.evaluatedSignals}`,
+    `Catalyst validos: ${payload.summary.catalystSignals} | sin catalyst=${payload.summary.missingCatalystCount}`,
+    `Catalyst vs no catalyst avg30: ${payload.catalyst.byPresence.withCatalyst.all.avg30d === null ? "n/d" : `${payload.catalyst.byPresence.withCatalyst.all.avg30d}%`} vs ${payload.catalyst.byPresence.withoutCatalyst.all.avg30d === null ? "n/d" : `${payload.catalyst.byPresence.withoutCatalyst.all.avg30d}%`}`,
+    `Mejora edge por catalyst: ${payload.catalyst.improvesEdge === null ? "n/d" : payload.catalyst.improvesEdge ? "si" : "no"}`,
     `Score alto vs score bajo/random: ${payload.baseline.walyBeatsBaseline === null ? "n/d" : payload.baseline.walyBeatsBaseline ? "si" : "no"} | spread ${payload.baseline.walySpread30d === null ? "n/d" : `${payload.baseline.walySpread30d}%`}`,
     `Mejor bucket RelVol: ${bestRelVol ? `${bestRelVol.bucket} avg30 ${bestRelVol.stats.avg30d}%` : "n/d"}`,
     `Peor bucket RelVol: ${worstRelVol ? `${worstRelVol.bucket} avg30 ${worstRelVol.stats.avg30d}%` : "n/d"}`,

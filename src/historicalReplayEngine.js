@@ -14,6 +14,8 @@ const SIGNAL_TYPE_ANALYSIS_PATH = path.join(HISTORICAL_RESEARCH_DIR, "signal-typ
 const V32_RESULTS_PATH = path.join(HISTORICAL_RESEARCH_DIR, "v3-2-signal-quality-backtest", "results.json");
 const TRAIN_TEST_ENGINE_PATH = path.join(BACKTESTS_DIR, "7-pillars", "train-test-engine.json");
 const EXAMPLE_SIGNALS_PATH = path.join(ROOT_DIR, "examples", "historical-signals.example.json");
+const HISTORICAL_CATALYSTS_PATH = path.join(BACKTESTS_DIR, "historical-catalysts", "validated-catalysts.json");
+const EXAMPLE_CATALYSTS_PATH = path.join(ROOT_DIR, "examples", "historical-catalysts.example.json");
 const TRAIN_START = "2021-01-01";
 const TRAIN_END = "2024-12-31";
 const TEST_START = "2025-01-01";
@@ -175,6 +177,93 @@ function loadSignals() {
   };
 }
 
+function loadCatalysts() {
+  const validated = readJsonIfExists(HISTORICAL_CATALYSTS_PATH);
+  const fallback = validated ? null : readJsonIfExists(EXAMPLE_CATALYSTS_PATH);
+  const source = validated ? HISTORICAL_CATALYSTS_PATH : EXAMPLE_CATALYSTS_PATH;
+  const rows = ((validated && validated.catalysts) || (fallback && fallback.catalysts) || [])
+    .filter((row) =>
+      row &&
+      row.ticker &&
+      row.knownFromDate &&
+      row.catalystDate &&
+      (!row.errors || row.errors.length === 0)
+    )
+    .map((row) => ({
+      catalystDate: row.catalystDate,
+      catalystId: row.catalystId || `${row.ticker}-${row.catalystDate}`,
+      catalystType: row.catalystType || "other",
+      expectedEvent: row.expectedEvent || null,
+      knownFromDate: row.knownFromDate,
+      source: row.source || null,
+      ticker: String(row.ticker).trim().toUpperCase()
+    }))
+    .sort((left, right) =>
+      left.ticker.localeCompare(right.ticker) ||
+      left.knownFromDate.localeCompare(right.knownFromDate) ||
+      left.catalystDate.localeCompare(right.catalystDate)
+    );
+  const byTicker = new Map();
+
+  rows.forEach((row) => {
+    const list = byTicker.get(row.ticker) || [];
+    list.push(row);
+    byTicker.set(row.ticker, list);
+  });
+
+  return {
+    byTicker,
+    rows,
+    source: rows.length ? formatRelative(source) : null
+  };
+}
+
+function daysBetween(startDate, endDate) {
+  if (!startDate || !endDate) {
+    return null;
+  }
+
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return null;
+  }
+
+  return Math.round((end.getTime() - start.getTime()) / 86400000);
+}
+
+function matchCatalyst(signal, catalystsByTicker) {
+  const candidates = catalystsByTicker.get(signal.ticker) || [];
+  const match = candidates.find((row) =>
+    row.knownFromDate <= signal.signalDate &&
+    signal.signalDate <= row.catalystDate
+  );
+
+  if (!match) {
+    return {
+      catalystDate: null,
+      catalystId: null,
+      catalystLookaheadSafe: false,
+      catalystSource: null,
+      catalystType: null,
+      daysToCatalyst: null,
+      expectedEvent: null,
+      hasKnownCatalyst: false
+    };
+  }
+
+  return {
+    catalystDate: match.catalystDate,
+    catalystId: match.catalystId,
+    catalystLookaheadSafe: true,
+    catalystSource: match.source,
+    catalystType: match.catalystType,
+    daysToCatalyst: daysBetween(signal.signalDate, match.catalystDate),
+    expectedEvent: match.expectedEvent,
+    hasKnownCatalyst: true
+  };
+}
+
 function findIndexByDate(rows, dateText) {
   return rows.findIndex((row) => row.date === dateText);
 }
@@ -241,11 +330,12 @@ function dayReturn(rows, signalIndex) {
   return resultPct(rows[signalIndex].close, rows[signalIndex - 1].close);
 }
 
-function hasKnownCatalyst(signal) {
-  return Boolean(signal.catalystType || signal.catalystDate || signal.catalyst || signal.catalystWindow);
+function hasKnownCatalyst(signal, catalyst) {
+  return Boolean(catalyst && catalyst.hasKnownCatalyst) ||
+    Boolean(signal.catalystType || signal.catalystDate || signal.catalyst || signal.catalystWindow);
 }
 
-function scoreSignal({ avgVolume, dayMove, dollarVolume, relVol, signal }) {
+function scoreSignal({ avgVolume, catalyst, dayMove, dollarVolume, relVol, signal }) {
   const missingData = [];
   const redFlags = [];
   let catalystScore = 0;
@@ -254,14 +344,15 @@ function scoreSignal({ avgVolume, dayMove, dollarVolume, relVol, signal }) {
   let riskPenalty = 0;
   const socialScore = Number.isFinite(signal.socialScore) ? Math.max(0, Math.min(10, signal.socialScore)) : 0;
   const portfolioFitScore = 8;
+  const catalystType = catalyst && catalyst.hasKnownCatalyst ? catalyst.catalystType : signal.catalystType;
 
-  if (hasKnownCatalyst(signal)) {
+  if (hasKnownCatalyst(signal, catalyst)) {
     catalystScore += 12;
-    if (signal.catalystDate || signal.catalystWindow) {
+    if ((catalyst && catalyst.catalystDate) || signal.catalystDate || signal.catalystWindow) {
       catalystScore += 6;
     }
     if (/fda|pdufa|phase|readout|earnings|insider|m&a/i.test([
-      signal.catalystType,
+      catalystType,
       signal.signalType,
       signal.notes
     ].filter(Boolean).join(" "))) {
@@ -338,7 +429,7 @@ function scoreSignal({ avgVolume, dayMove, dollarVolume, relVol, signal }) {
   );
 
   return {
-    classification: classify(totalScore, hasKnownCatalyst(signal)),
+    classification: classify(totalScore, hasKnownCatalyst(signal, catalyst)),
     components: {
       catalystScore,
       portfolioFitScore,
@@ -454,8 +545,9 @@ function normalizeSignal(rawSignal, index) {
   };
 }
 
-function replaySignal(signal, priceRows, index) {
+function replaySignal(signal, priceRows, catalystsByTicker, index) {
   const missingData = [];
+  const catalyst = matchCatalyst(signal, catalystsByTicker);
 
   if (!signal.ticker) {
     missingData.push("ticker");
@@ -469,7 +561,15 @@ function replaySignal(signal, priceRows, index) {
     missingData.push("historical price csv");
     return {
       availableDataOnly: true,
+      catalystDate: catalyst.catalystDate,
+      catalystId: catalyst.catalystId,
+      catalystLookaheadSafe: catalyst.catalystLookaheadSafe,
+      catalystScore: catalyst.hasKnownCatalyst ? 18 : 0,
+      catalystSource: catalyst.catalystSource,
+      catalystType: catalyst.catalystType,
       classification: "discard",
+      daysToCatalyst: catalyst.daysToCatalyst,
+      hasKnownCatalyst: catalyst.hasKnownCatalyst,
       missingData,
       replayId: signal.replayId,
       signalDate: signal.signalDate,
@@ -484,7 +584,15 @@ function replaySignal(signal, priceRows, index) {
     missingData.push("price row at signalDate");
     return {
       availableDataOnly: true,
+      catalystDate: catalyst.catalystDate,
+      catalystId: catalyst.catalystId,
+      catalystLookaheadSafe: catalyst.catalystLookaheadSafe,
+      catalystScore: catalyst.hasKnownCatalyst ? 18 : 0,
+      catalystSource: catalyst.catalystSource,
+      catalystType: catalyst.catalystType,
       classification: "discard",
+      daysToCatalyst: catalyst.daysToCatalyst,
+      hasKnownCatalyst: catalyst.hasKnownCatalyst,
       missingData,
       replayId: signal.replayId,
       signalDate: signal.signalDate,
@@ -505,6 +613,7 @@ function replaySignal(signal, priceRows, index) {
   const move = dayReturn(priceRows, signalIndex);
   const score = scoreSignal({
     avgVolume,
+    catalyst,
     dayMove: move,
     dollarVolume,
     relVol,
@@ -514,11 +623,20 @@ function replaySignal(signal, priceRows, index) {
   const result = {
     availableDataOnly: true,
     avgVolume,
+    catalystDate: catalyst.catalystDate,
+    catalystId: catalyst.catalystId,
+    catalystLookaheadSafe: catalyst.catalystLookaheadSafe,
+    catalystScore: score.components.catalystScore,
+    catalystSource: catalyst.catalystSource,
+    catalystType: catalyst.catalystType,
     classification: score.classification,
     components: score.components,
     dayMove: move,
     daysToMaxMove: pathStats.daysToMaxMove,
+    daysToCatalyst: catalyst.daysToCatalyst,
     dollarVolume,
+    expectedCatalystEvent: catalyst.expectedEvent,
+    hasKnownCatalyst: catalyst.hasKnownCatalyst,
     maxDrawdown: pathStats.maxDrawdown,
     maxUpside: pathStats.maxUpside,
     missingData: [...new Set([...missingData, ...score.missingData])],
@@ -656,6 +774,8 @@ function compareAWithBC(rows) {
 
 function buildPerformance(rows) {
   return {
+    byCatalystPresence: groupBy(rows, (row) => row.hasKnownCatalyst ? "with_catalyst" : "without_catalyst"),
+    byCatalystType: groupBy(rows.filter((row) => row.hasKnownCatalyst), (row) => row.catalystType || "unknown"),
     byClassification: groupBy(rows, (row) => row.classification || "missing"),
     byDollarVolumeBucket: groupBy(rows, (row) => dollarVolumeBucket(row.dollarVolume)),
     byDrawdownBucket: groupBy(rows, (row) => drawdownBucket(row.maxDrawdown)),
@@ -765,6 +885,8 @@ function renderSummary(payload) {
   lines.push("## Cantidad de senales evaluadas");
   lines.push(`- Evaluadas: ${payload.summary.evaluatedSignals}`);
   lines.push(`- Input signals: ${payload.summary.inputSignals}`);
+  lines.push(`- Con catalyst historico valido: ${payload.summary.signalsWithCatalyst}`);
+  lines.push(`- Sin catalyst historico valido: ${payload.summary.signalsWithoutCatalyst}`);
   lines.push(`- Missing data rows: ${payload.summary.rowsWithMissingData}`);
   lines.push("");
   lines.push("## Train results");
@@ -792,6 +914,14 @@ function renderSummary(payload) {
   lines.push("");
   lines.push("## Performance por categoria");
   lines.push(renderGroupedPerformance(payload.performance.byClassification));
+  lines.push("");
+  lines.push("## Performance catalyst vs no catalyst");
+  lines.push(renderGroupedPerformance(payload.performance.byCatalystPresence));
+  lines.push("");
+  lines.push("## Performance por tipo de catalyst");
+  lines.push(Object.keys(payload.performance.byCatalystType).length
+    ? renderGroupedPerformance(payload.performance.byCatalystType)
+    : "- Sin senales con catalyst historico valido.");
   lines.push("");
   lines.push("## Performance por tipo de senal");
   lines.push(renderGroupedPerformance(payload.performance.bySignalType));
@@ -877,6 +1007,7 @@ function rulesToAdjust(payload) {
 function buildPayload() {
   const prices = loadPriceHistory();
   const signalInput = loadSignals();
+  const catalysts = loadCatalysts();
   const parameterSweep = readJsonIfExists(PARAMETER_SWEEP_PATH);
   const signalTypeAnalysis = readJsonIfExists(SIGNAL_TYPE_ANALYSIS_PATH);
   const v32Results = readJsonIfExists(V32_RESULTS_PATH);
@@ -905,7 +1036,7 @@ function buildPayload() {
   }
 
   const replayRows = signals.map((signal, index) =>
-    replaySignal(signal, prices.byTicker.get(signal.ticker), index)
+    replaySignal(signal, prices.byTicker.get(signal.ticker), catalysts.byTicker, index)
   );
   const evaluatedRows = replayRows.filter((row) =>
     Number.isFinite(row.priceAtSignal) &&
@@ -939,6 +1070,8 @@ function buildPayload() {
     falsePositives: positives,
     generatedAt: new Date().toISOString(),
     inputs: {
+      historicalCatalysts: catalysts.source,
+      historicalCatalystsCount: catalysts.rows.length,
       generatedSignals: signalInput.source,
       parameterSweep: parameterSweep ? formatRelative(PARAMETER_SWEEP_PATH) : null,
       priceCsvDir: fs.existsSync(RESEARCH_PRICE_DIR) ? formatRelative(RESEARCH_PRICE_DIR) : null,
@@ -965,6 +1098,8 @@ function buildPayload() {
     replayRows,
     summary: {
       evaluatedSignals: evaluatedRows.length,
+      signalsWithCatalyst: evaluatedRows.filter((row) => row.hasKnownCatalyst).length,
+      signalsWithoutCatalyst: evaluatedRows.filter((row) => !row.hasKnownCatalyst).length,
       inputSignals: signals.length,
       rowsWithMissingData: replayRows.filter((row) => row.missingData && row.missingData.length > 0).length,
       testSignals: testRows.length,
@@ -1027,6 +1162,7 @@ function renderConsoleReport(payload, paths) {
   return [
     "WALY Historical Replay Engine v1 generado.",
     `Signals evaluadas: ${payload.summary.evaluatedSignals} / input ${payload.summary.inputSignals}`,
+    `Catalyst validos: ${payload.summary.signalsWithCatalyst} | sin catalyst=${payload.summary.signalsWithoutCatalyst}`,
     `Train: ${renderStats(payload.trainTest.train.performance.overall)}`,
     `Test: ${renderStats(payload.trainTest.test.performance.overall)}`,
     `Score alto supera score bajo: ${highLow.topBeatsBottom === null ? "n/d" : highLow.topBeatsBottom ? "si" : "no"}`,
