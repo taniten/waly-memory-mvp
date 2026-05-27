@@ -2,6 +2,7 @@
 
 const path = require("path");
 const { generateBacktestReport } = require("./backtestEngine");
+const { runCatalystEngine } = require("./catalystEngine");
 const { runDailyCockpit } = require("./dailyCockpit");
 const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktestEngine");
 const { runHistoricalResearchLab } = require("./historicalResearchLab");
@@ -9,19 +10,25 @@ const { initData } = require("./initData");
 const { runLiveUniverseScan } = require("./liveUniverseScanner");
 const { runMultibaggerLab } = require("./multibaggerLab");
 const { runOpportunityRouter } = require("./opportunityRouter");
+const { runPostMortemEngine } = require("./postMortemEngine");
 const { runPortfolioBacktest } = require("./portfolioBacktest");
 const { runPortfolioBacktestSweep } = require("./portfolioBacktestSweep");
 const { runPortfolioReview } = require("./portfolioEngine");
 const { runQualityGateBacktest } = require("./qualityGateBacktest");
+const { runRealSignalLog } = require("./realSignalLog");
 const { runReversalScan } = require("./reversalRadar");
 const { generateReport } = require("./reporter");
+const { runSizingEngine } = require("./sizingEngine");
 const { runShortScan } = require("./shortRadar");
 const { runSelectorEngine } = require("./selectorEngine");
 const { runSignalQualityGate } = require("./signalQualityGate");
 const { runSocialInbox } = require("./socialInbox");
 const { runSocialRadar } = require("./socialRadar");
 const { runSocialSourceTracker } = require("./socialSourceTracker");
+const { runTimingEngine } = require("./timingEngine");
+const { runTrainTestEngine } = require("./trainTestEngine");
 const { syncUniverse } = require("./universeEngine");
+const { runWalyPipeline } = require("./walyPipeline");
 const {
   addOutcomeEntry,
   addLogEntry,
@@ -53,6 +60,13 @@ function printUsage() {
   node src/cli.js multibagger-lab <config-json>
   node src/cli.js daily-cockpit
   node src/cli.js selector-engine
+  node src/cli.js real-signal-log
+  node src/cli.js catalyst-engine
+  node src/cli.js timing-engine
+  node src/cli.js sizing-engine
+  node src/cli.js train-test-engine
+  node src/cli.js post-mortem-engine
+  node src/cli.js waly-pipeline
   node src/cli.js portfolio-review
   node src/cli.js opportunity-router
   node src/cli.js sync-universe
@@ -365,6 +379,41 @@ async function main() {
       }
       case "selector-engine": {
         const result = runSelectorEngine();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "real-signal-log": {
+        const result = runRealSignalLog();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "catalyst-engine": {
+        const result = runCatalystEngine();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "timing-engine": {
+        const result = runTimingEngine();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "sizing-engine": {
+        const result = runSizingEngine();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "train-test-engine": {
+        const result = runTrainTestEngine();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "post-mortem-engine": {
+        const result = runPostMortemEngine();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "waly-pipeline": {
+        const result = runWalyPipeline();
         console.log(result.consoleReport);
         break;
       }
