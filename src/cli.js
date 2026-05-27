@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("path");
+const { runEdgeValidationEngine } = require("./edgeValidationEngine");
 const { generateBacktestReport } = require("./backtestEngine");
 const { runCatalystEngine } = require("./catalystEngine");
 const { runDailyCockpit } = require("./dailyCockpit");
@@ -47,6 +48,7 @@ function printUsage() {
   node src/cli.js backtest [--dry-run]
   node src/cli.js historical-backtest <config-json>
   node src/cli.js historical-replay-engine
+  node src/cli.js edge-validation-engine
   node src/cli.js historical-research-lab <config-json>
   node src/cli.js signal-quality-gate
   node src/cli.js quality-gate-backtest
@@ -279,6 +281,11 @@ async function main() {
       }
       case "historical-replay-engine": {
         const result = runHistoricalReplayEngine();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "edge-validation-engine": {
+        const result = runEdgeValidationEngine();
         console.log(result.consoleReport);
         break;
       }
