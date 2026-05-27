@@ -28,7 +28,7 @@ const { runSocialSourceTracker } = require("./socialSourceTracker");
 const { runTimingEngine } = require("./timingEngine");
 const { runTrainTestEngine } = require("./trainTestEngine");
 const { syncUniverse } = require("./universeEngine");
-const { runWalyPipeline } = require("./walyPipeline");
+const { runWalyHealth, runWalyPipeline } = require("./walyPipeline");
 const {
   addOutcomeEntry,
   addLogEntry,
@@ -67,6 +67,7 @@ function printUsage() {
   node src/cli.js train-test-engine
   node src/cli.js post-mortem-engine
   node src/cli.js waly-pipeline
+  node src/cli.js waly-health
   node src/cli.js portfolio-review
   node src/cli.js opportunity-router
   node src/cli.js sync-universe
@@ -414,6 +415,11 @@ async function main() {
       }
       case "waly-pipeline": {
         const result = runWalyPipeline();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "waly-health": {
+        const result = runWalyHealth();
         console.log(result.consoleReport);
         break;
       }
