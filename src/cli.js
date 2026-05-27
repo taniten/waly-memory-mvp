@@ -16,6 +16,7 @@ const { runQualityGateBacktest } = require("./qualityGateBacktest");
 const { runReversalScan } = require("./reversalRadar");
 const { generateReport } = require("./reporter");
 const { runShortScan } = require("./shortRadar");
+const { runSelectorEngine } = require("./selectorEngine");
 const { runSignalQualityGate } = require("./signalQualityGate");
 const { runSocialInbox } = require("./socialInbox");
 const { runSocialRadar } = require("./socialRadar");
@@ -51,6 +52,7 @@ function printUsage() {
   node src/cli.js short-scan <config-json>
   node src/cli.js multibagger-lab <config-json>
   node src/cli.js daily-cockpit
+  node src/cli.js selector-engine
   node src/cli.js portfolio-review
   node src/cli.js opportunity-router
   node src/cli.js sync-universe
@@ -358,6 +360,11 @@ async function main() {
       }
       case "daily-cockpit": {
         const result = await runDailyCockpit();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "selector-engine": {
+        const result = runSelectorEngine();
         console.log(result.consoleReport);
         break;
       }
