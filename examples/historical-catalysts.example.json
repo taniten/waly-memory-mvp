@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "waly-historical-catalysts-v1",
+  "updatedAt": "2026-05-27T00:00:00.000Z",
+  "notes": [
+    "Public research examples only. Verify source documents before promoting to production research.",
+    "Outcomes and prices are intentionally unknown/null unless explicitly verified point-in-time.",
+    "knownFromDate must be on or before catalystDate to avoid look-ahead bias."
+  ],
+  "catalysts": [
+    {
+      "catalystId": "SRPT-FDA-2023-06-22-ELEVIDYS",
+      "ticker": "SRPT",
+      "catalystType": "FDA",
+      "knownFromDate": "2023-06-22",
+      "catalystDate": "2023-06-22",
+      "source": "FDA public approval announcement / Sarepta public release; verify original document before production use.",
+      "expectedEvent": "FDA decision for delandistrogene moxeparvovec / ELEVIDYS accelerated approval.",
+      "actualOutcome": "unknown",
+      "priceBefore": null,
+      "priceAfter7d": null,
+      "priceAfter30d": null,
+      "maxUpside30d": null,
+      "maxDrawdown30d": null,
+      "notes": "Public example row. Outcome and price metrics are not filled because this file is a schema seed, not a verified outcome database."
+    },
+    {
+      "catalystId": "VKTX-PHASE2-2024-02-27-VK2735",
+      "ticker": "VKTX",
+      "catalystType": "phase2",
+      "knownFromDate": "2024-02-27",
+      "catalystDate": "2024-02-27",
+      "source": "Viking Therapeutics public release; verify original document before production use.",
+      "expectedEvent": "VK2735 Phase 2 VENTURE topline data.",
+      "actualOutcome": "unknown",
+      "priceBefore": null,
+      "priceAfter7d": null,
+      "priceAfter30d": null,
+      "maxUpside30d": null,
+      "maxDrawdown30d": null,
+      "notes": "Public example row. No price or outcome values are inferred."
+    },
+    {
+      "catalystId": "GOOGL-EARNINGS-2024-01-30-Q4",
+      "ticker": "GOOGL",
+      "catalystType": "earnings",
+      "knownFromDate": "2024-01-30",
+      "catalystDate": "2024-01-30",
+      "source": "Alphabet public earnings release; verify original document before production use.",
+      "expectedEvent": "Alphabet Q4 2023 earnings release.",
+      "actualOutcome": "unknown",
+      "priceBefore": null,
+      "priceAfter7d": null,
+      "priceAfter30d": null,
+      "maxUpside30d": null,
+      "maxDrawdown30d": null,
+      "notes": "Public example row. Outcome deliberately left unknown."
+    },
+    {
+      "catalystId": "MRNA-EARNINGS-2024-02-22-Q4",
+      "ticker": "MRNA",
+      "catalystType": "earnings",
+      "knownFromDate": "2024-02-22",
+      "catalystDate": "2024-02-22",
+      "source": "Moderna public earnings release; verify original document before production use.",
+      "expectedEvent": "Moderna Q4/FY 2023 earnings release.",
+      "actualOutcome": "unknown",
+      "priceBefore": null,
+      "priceAfter7d": null,
+      "priceAfter30d": null,
+      "maxUpside30d": null,
+      "maxDrawdown30d": null,
+      "notes": "Public example row. No outcome or price data is invented."
+    }
+  ]
+}

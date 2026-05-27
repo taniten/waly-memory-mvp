@@ -6,6 +6,7 @@ const { generateBacktestReport } = require("./backtestEngine");
 const { runCatalystEngine } = require("./catalystEngine");
 const { runDailyCockpit } = require("./dailyCockpit");
 const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktestEngine");
+const { runHistoricalCatalystDataset } = require("./historicalCatalystDataset");
 const { runHistoricalReplayEngine } = require("./historicalReplayEngine");
 const { runHistoricalResearchLab } = require("./historicalResearchLab");
 const { initData } = require("./initData");
@@ -47,6 +48,7 @@ function printUsage() {
   node src/cli.js report
   node src/cli.js backtest [--dry-run]
   node src/cli.js historical-backtest <config-json>
+  node src/cli.js historical-catalyst-dataset
   node src/cli.js historical-replay-engine
   node src/cli.js edge-validation-engine
   node src/cli.js historical-research-lab <config-json>
@@ -277,6 +279,11 @@ async function main() {
         console.log(`Partial: ${result.summary.partialSignals}`);
         console.log(`Pending: ${result.summary.pendingSignals}`);
         console.log(`Errores: ${result.summary.errorCount}`);
+        break;
+      }
+      case "historical-catalyst-dataset": {
+        const result = runHistoricalCatalystDataset();
+        console.log(result.consoleReport);
         break;
       }
       case "historical-replay-engine": {
