@@ -5,6 +5,7 @@ const { generateBacktestReport } = require("./backtestEngine");
 const { runCatalystEngine } = require("./catalystEngine");
 const { runDailyCockpit } = require("./dailyCockpit");
 const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktestEngine");
+const { runHistoricalReplayEngine } = require("./historicalReplayEngine");
 const { runHistoricalResearchLab } = require("./historicalResearchLab");
 const { initData } = require("./initData");
 const { runLiveUniverseScan } = require("./liveUniverseScanner");
@@ -45,6 +46,7 @@ function printUsage() {
   node src/cli.js report
   node src/cli.js backtest [--dry-run]
   node src/cli.js historical-backtest <config-json>
+  node src/cli.js historical-replay-engine
   node src/cli.js historical-research-lab <config-json>
   node src/cli.js signal-quality-gate
   node src/cli.js quality-gate-backtest
@@ -273,6 +275,11 @@ async function main() {
         console.log(`Partial: ${result.summary.partialSignals}`);
         console.log(`Pending: ${result.summary.pendingSignals}`);
         console.log(`Errores: ${result.summary.errorCount}`);
+        break;
+      }
+      case "historical-replay-engine": {
+        const result = runHistoricalReplayEngine();
+        console.log(result.consoleReport);
         break;
       }
       case "historical-research-lab": {
