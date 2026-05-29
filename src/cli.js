@@ -5,6 +5,7 @@ const { runEdgeValidationEngine } = require("./edgeValidationEngine");
 const { generateBacktestReport } = require("./backtestEngine");
 const { runCatalystEngine } = require("./catalystEngine");
 const { runDailyCockpit } = require("./dailyCockpit");
+const { runForwardSnapshotLog } = require("./forwardSnapshotLogger");
 const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktestEngine");
 const { runHistoricalCatalystDataset } = require("./historicalCatalystDataset");
 const { runHistoricalReplayEngine } = require("./historicalReplayEngine");
@@ -66,6 +67,7 @@ function printUsage() {
   node src/cli.js short-scan <config-json>
   node src/cli.js multibagger-lab <config-json>
   node src/cli.js daily-cockpit
+  node src/cli.js forward-snapshot-log
   node src/cli.js selector-engine
   node src/cli.js real-signal-log
   node src/cli.js catalyst-engine
@@ -399,6 +401,11 @@ async function main() {
       }
       case "daily-cockpit": {
         const result = await runDailyCockpit();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "forward-snapshot-log": {
+        const result = runForwardSnapshotLog();
         console.log(result.consoleReport);
         break;
       }
