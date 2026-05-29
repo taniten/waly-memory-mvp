@@ -14,6 +14,11 @@ const {
 } = require("./realSignalLog");
 const { buildCatalystPayload } = require("./catalystEngine");
 const { buildPostMortemPayload } = require("./postMortemEngine");
+const {
+  buildRealTickerSet,
+  productionAllowsTicker,
+  resolveRuntimeMode
+} = require("./runtimeMode");
 const { buildSizingPayload } = require("./sizingEngine");
 const { buildTimingPayload } = require("./timingEngine");
 const { buildTrainTestPayload } = require("./trainTestEngine");
@@ -38,6 +43,52 @@ const PROHIBITED_ACTIONS = new Set([
   "binance"
 ]);
 const PIPELINE_LATEST_PATH = path.join(OUTPUT_DIR, "waly-pipeline-latest.json");
+
+function filterRowsByTicker(rows, allowTicker) {
+  return Array.isArray(rows) ? rows.filter((row) => allowTicker(row && row.ticker)) : rows;
+}
+
+function filterMarketDataByTicker(marketData, allowTicker) {
+  if (!marketData || typeof marketData !== "object") {
+    return marketData;
+  }
+
+  return Object.fromEntries(
+    Object.entries(marketData).filter(([ticker]) => allowTicker(ticker))
+  );
+}
+
+function filterProductionInputs(inputs) {
+  const realTickers = buildRealTickerSet(inputs);
+  const allowTicker = (ticker) => productionAllowsTicker(ticker, realTickers, { realOnly: true });
+  const dailyCockpit = inputs.dailyCockpit ? {
+    ...inputs.dailyCockpit,
+    marketData: filterMarketDataByTicker(inputs.dailyCockpit.marketData, allowTicker),
+    portfolio: filterRowsByTicker(inputs.dailyCockpit.portfolio, allowTicker),
+    router: inputs.dailyCockpit.router ? {
+      ...inputs.dailyCockpit.router,
+      manualCandidates: Array.isArray(inputs.dailyCockpit.router.manualCandidates)
+        ? inputs.dailyCockpit.router.manualCandidates.filter(allowTicker)
+        : inputs.dailyCockpit.router.manualCandidates
+    } : inputs.dailyCockpit.router,
+    watchlist: filterRowsByTicker(inputs.dailyCockpit.watchlist, allowTicker)
+  } : inputs.dailyCockpit;
+  const selectorEngine = inputs.selectorEngine ? {
+    ...inputs.selectorEngine,
+    ranking: filterRowsByTicker(inputs.selectorEngine.ranking, allowTicker)
+  } : inputs.selectorEngine;
+  const socialRadar = inputs.socialRadar ? {
+    ...inputs.socialRadar,
+    mentions: filterRowsByTicker(inputs.socialRadar.mentions, allowTicker)
+  } : inputs.socialRadar;
+
+  return {
+    ...inputs,
+    dailyCockpit,
+    selectorEngine,
+    socialRadar
+  };
+}
 
 function fmt(value, decimals = 1) {
   return typeof value === "number" ? round(value, decimals).toFixed(decimals) : "n/d";
@@ -544,7 +595,9 @@ function renderSummary(payload) {
 }
 
 function buildPipelinePayload(options = {}) {
-  const inputs = options.inputs || readCoreInputs();
+  const mode = resolveRuntimeMode(options);
+  const rawInputs = options.inputs || readCoreInputs();
+  const inputs = mode === "production" ? filterProductionInputs(rawInputs) : rawInputs;
   const signalLog = buildSignalLogPayload({ inputs }).payload;
   const catalyst = buildCatalystPayload({ inputs }).payload;
   const timing = buildTimingPayload({ inputs }).payload;
@@ -633,7 +686,8 @@ function buildPipelinePayload(options = {}) {
     health,
     healthStatus: health.healthStatus,
     missingData,
-    mode: "read-only-research",
+    mode,
+    pipelineMode: "read-only-research",
     portfolio: portfolioRows(inputs),
     postMortem,
     prohibitedActionHits,
@@ -675,6 +729,7 @@ function renderConsoleReport(payload) {
 
   return [
     "WALY 7 Pillars Pipeline generado.",
+    `Mode: ${payload.mode}`,
     `Health: ${payload.healthStatus} | safeToReview=${payload.safeToReview} | safeToOperate=false`,
     `Ranking: ${top.join(" | ") || "missingData"}`,
     `Operables: ${payload.decision.operables.join(", ") || "ninguno"}`,
@@ -693,6 +748,7 @@ function renderHealthConsoleReport(payload) {
 
   return [
     "WALY Health Check.",
+    `mode: ${payload.mode || "production"}`,
     `healthStatus: ${payload.healthStatus || "missingData"}`,
     `decisionFinal: ${decisionFinal}`,
     `operables: ${operables.join(", ") || "ninguno"}`,
@@ -724,28 +780,34 @@ function runWalyPipeline(options = {}) {
   };
 }
 
-function runWalyHealth() {
+function runWalyHealth(options = {}) {
+  const mode = resolveRuntimeMode(options);
   let payload = null;
 
-  try {
-    payload = JSON.parse(fs.readFileSync(PIPELINE_LATEST_PATH, "utf8"));
-  } catch (error) {
-    if (error && error.code === "ENOENT") {
-      payload = {
-        conflicts: ["waly-pipeline-latest.json missing"],
-        decision: {
-          finalAction: "no_operar",
-          manualCandidates: [],
-          operables: []
-        },
-        decisionFinal: "no_operar",
-        healthStatus: "red",
-        missingData: ["backtests/7-pillars/waly-pipeline-latest.json"],
-        safeToOperate: false,
-        safeToReview: false
-      };
-    } else {
-      throw error;
+  if (mode === "production") {
+    payload = buildPipelinePayload({ ...options, mode }).payload;
+  } else {
+    try {
+      payload = JSON.parse(fs.readFileSync(PIPELINE_LATEST_PATH, "utf8"));
+    } catch (error) {
+      if (error && error.code === "ENOENT") {
+        payload = {
+          conflicts: ["waly-pipeline-latest.json missing"],
+          decision: {
+            finalAction: "no_operar",
+            manualCandidates: [],
+            operables: []
+          },
+          decisionFinal: "no_operar",
+          healthStatus: "red",
+          missingData: ["backtests/7-pillars/waly-pipeline-latest.json"],
+          mode,
+          safeToOperate: false,
+          safeToReview: false
+        };
+      } else {
+        throw error;
+      }
     }
   }
 

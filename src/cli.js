@@ -32,6 +32,7 @@ const { runTimingEngine } = require("./timingEngine");
 const { runTrainTestEngine } = require("./trainTestEngine");
 const { syncUniverse } = require("./universeEngine");
 const { runWalyHealth, runWalyPipeline } = require("./walyPipeline");
+const { parseRuntimeOptions } = require("./runtimeMode");
 const {
   addOutcomeEntry,
   addLogEntry,
@@ -74,6 +75,7 @@ function printUsage() {
   node src/cli.js post-mortem-engine
   node src/cli.js waly-pipeline
   node src/cli.js waly-health
+  Opciones: --mode production | --mode demo | --use-examples
   node src/cli.js portfolio-review
   node src/cli.js opportunity-router
   node src/cli.js sync-universe
@@ -234,6 +236,7 @@ async function main() {
   const command = process.argv[2];
   const args = process.argv.slice(3);
   const argument = args[0];
+  const runtimeOptions = parseRuntimeOptions(args);
 
   try {
     switch (command) {
@@ -313,12 +316,12 @@ async function main() {
         break;
       }
       case "social-inbox": {
-        const result = runSocialInbox();
+        const result = runSocialInbox(runtimeOptions);
         console.log(result.consoleReport);
         break;
       }
       case "social-radar": {
-        const result = runSocialRadar();
+        const result = runSocialRadar(runtimeOptions);
         console.log(result.consoleReport);
         break;
       }
@@ -435,12 +438,12 @@ async function main() {
         break;
       }
       case "waly-pipeline": {
-        const result = runWalyPipeline();
+        const result = runWalyPipeline(runtimeOptions);
         console.log(result.consoleReport);
         break;
       }
       case "waly-health": {
-        const result = runWalyHealth();
+        const result = runWalyHealth(runtimeOptions);
         console.log(result.consoleReport);
         break;
       }

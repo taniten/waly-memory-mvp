@@ -3,6 +3,12 @@
 const fs = require("fs");
 const path = require("path");
 const { BACKTESTS_DIR, DATA_DIR } = require("./storage");
+const {
+  buildRealTickerSet,
+  productionAllowsTicker,
+  resolveRuntimeMode,
+  shouldUseDemoExamples
+} = require("./runtimeMode");
 const { isFiniteNumber, normalizeTicker } = require("./validators");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
@@ -10,6 +16,7 @@ const EXAMPLES_DIR = path.join(ROOT_DIR, "examples");
 const OUTPUT_DIR = path.join(BACKTESTS_DIR, "social-radar");
 const EXAMPLE_SOURCES_PATH = path.join(EXAMPLES_DIR, "social-sources.example.json");
 const EXAMPLE_MENTIONS_PATH = path.join(EXAMPLES_DIR, "social-mentions.example.json");
+const POSITIONS_PATH = path.join(DATA_DIR, "positions.json");
 const WATCHLIST_PATH = path.join(DATA_DIR, "watchlist.json");
 const TRACKER_DIR = path.join(BACKTESTS_DIR, "social-source-tracker");
 const TRACKER_SOURCES_PATH = path.join(TRACKER_DIR, "sources-scored.json");
@@ -224,29 +231,55 @@ function buildMentionListFromInbox(inboxPayload) {
     .filter((mention) => mention.mentionId);
 }
 
-function selectMentionInputs(inboxPayload, exampleMentions) {
+function filterProductionMentions(mentions, realTickers) {
+  return mentions.filter((mention) => productionAllowsTicker(mention.ticker, realTickers));
+}
+
+function selectMentionInputs({ exampleMentions, inboxPayload, mode, realTickers, useExamples }) {
   if (inboxPayload && Array.isArray(inboxPayload.normalizedMentions)) {
+    const mentions = buildMentionListFromInbox(inboxPayload);
+    const filtered = mode === "production" ? filterProductionMentions(mentions, realTickers) : mentions;
+
     return {
       inputMode: "social-inbox",
       inputPath: INBOX_MENTIONS_PATH,
       inputSummary: {
         examplesFallbackMentions: 0,
         socialInboxMentions: inboxPayload.normalizedMentions.length,
+        suppressedMentions: mentions.length - filtered.length,
         used: "social-inbox"
       },
-      mentions: buildMentionListFromInbox(inboxPayload)
+      mentions: filtered
     };
   }
 
+  if (mode === "production" && !useExamples) {
+    return {
+      inputMode: "production-no-demo-fallback",
+      inputPath: null,
+      inputSummary: {
+        examplesFallbackMentions: 0,
+        socialInboxMentions: 0,
+        suppressedMentions: exampleMentions.length,
+        used: "production real-data only"
+      },
+      mentions: []
+    };
+  }
+
+  const mentions = buildMentionListFromExamples(exampleMentions);
+  const filtered = mode === "production" ? filterProductionMentions(mentions, realTickers) : mentions;
+
   return {
-    inputMode: "examples fallback",
+    inputMode: mode === "demo" ? "demo examples" : "explicit examples fallback",
     inputPath: EXAMPLE_MENTIONS_PATH,
     inputSummary: {
-      examplesFallbackMentions: exampleMentions.length,
+      examplesFallbackMentions: mentions.length,
       socialInboxMentions: 0,
-      used: "examples fallback"
+      suppressedMentions: mentions.length - filtered.length,
+      used: mode === "demo" ? "demo examples" : "explicit examples fallback"
     },
-    mentions: buildMentionListFromExamples(exampleMentions)
+    mentions: filtered
   };
 }
 
@@ -402,7 +435,7 @@ function renderRow(cells) {
   return `| ${cells.join(" | ")} |`;
 }
 
-function renderSummary({ generatedAt, inputSummary, mentions, sources }) {
+function renderSummary({ generatedAt, inputSummary, mentions, mode, sources }) {
   const ranked = [...mentions].sort((left, right) =>
     right.socialScore - left.socialScore ||
     left.ticker.localeCompare(right.ticker) ||
@@ -420,12 +453,13 @@ function renderSummary({ generatedAt, inputSummary, mentions, sources }) {
   lines.push("# WALY Social Radar");
   lines.push("");
   lines.push(`Generado: ${generatedAt}`);
-  lines.push("Modo: read-only local; no red, no scraping, no login, no paywalls, no opera.");
+  lines.push(`Modo: ${mode}; read-only local; no red, no scraping, no login, no paywalls, no opera.`);
   lines.push("");
   lines.push("## 1. Total de menciones evaluadas");
   lines.push(`- Input usado: ${inputSummary.used}`);
   lines.push(`- Menciones desde social-inbox: ${inputSummary.socialInboxMentions}`);
   lines.push(`- Menciones desde examples fallback: ${inputSummary.examplesFallbackMentions}`);
+  lines.push(`- Menciones suprimidas por modo production: ${inputSummary.suppressedMentions || 0}`);
   lines.push(`- Total: ${mentions.length}`);
   lines.push(`- review_with_waly: ${mentions.filter((item) => item.suggestedAction === "review_with_waly").length}`);
   lines.push(`- add_to_watchlist: ${mentions.filter((item) => item.suggestedAction === "add_to_watchlist").length}`);
@@ -494,6 +528,7 @@ function renderConsoleReport(result) {
 
   return [
     "WALY Social Radar generado.",
+    `Mode: ${result.mode}`,
     `Input usado: ${result.inputSummary.used} | inbox=${result.inputSummary.socialInboxMentions} | examples=${result.inputSummary.examplesFallbackMentions}`,
     `Menciones evaluadas: ${result.mentions.length}`,
     `Acciones: ${ACTIONS.map((action) => `${action}=${result.actionCounts[action] || 0}`).join(" | ")}`,
@@ -505,14 +540,27 @@ function renderConsoleReport(result) {
   ].join("\n");
 }
 
-function runSocialRadar() {
+function runSocialRadar(options = {}) {
+  const mode = resolveRuntimeMode(options);
+  const useExamples = shouldUseDemoExamples(options);
   const sourcesPayload = readJson(EXAMPLE_SOURCES_PATH);
   const mentionsPayload = readJson(EXAMPLE_MENTIONS_PATH);
+  const positionsPayload = readJsonIfExists(POSITIONS_PATH) || { positions: [] };
   const watchlistPayload = readJson(WATCHLIST_PATH);
+  const realTickers = buildRealTickerSet({
+    positions: positionsPayload,
+    watchlist: watchlistPayload
+  });
   const trackerSourcesPayload = readJsonIfExists(TRACKER_SOURCES_PATH);
   const inboxPayload = readJsonIfExists(INBOX_MENTIONS_PATH);
   const sourceIndex = buildSourceIndex(sourcesPayload.sources || [], trackerSourcesPayload);
-  const mentionSelection = selectMentionInputs(inboxPayload, mentionsPayload.mentions || []);
+  const mentionSelection = selectMentionInputs({
+    exampleMentions: mentionsPayload.mentions || [],
+    inboxPayload,
+    mode,
+    realTickers,
+    useExamples
+  });
   const mentionInputs = mentionSelection.mentions;
   const watchlistIndex = buildWatchlistIndex(watchlistPayload);
   const generatedAt = new Date().toISOString();
@@ -529,20 +577,24 @@ function runSocialRadar() {
     generatedAt,
     inputs: {
       fallbackMentionsPath: formatRelative(EXAMPLE_MENTIONS_PATH),
-      mentionsPath: formatRelative(mentionSelection.inputPath),
+      mentionsPath: mentionSelection.inputPath ? formatRelative(mentionSelection.inputPath) : null,
       mentionsSource: mentionSelection.inputMode,
       optionalSocialInboxPath: fs.existsSync(INBOX_MENTIONS_PATH) ? formatRelative(INBOX_MENTIONS_PATH) : null,
       optionalTrackerSourcesPath: fs.existsSync(TRACKER_SOURCES_PATH) ? formatRelative(TRACKER_SOURCES_PATH) : null,
+      positionsPath: formatRelative(POSITIONS_PATH),
       sourcesPath: formatRelative(EXAMPLE_SOURCES_PATH),
       watchlistPath: formatRelative(WATCHLIST_PATH)
     },
-    mode: "read-only-local",
+    mode,
     notes: [
       "No opera.",
       "No usa red.",
       "No scraping, no login, no paywalls.",
       "No toca positions, outcomes ni data/social_signals.json.",
-      "Social Radar solo propone discovery/revision."
+      "Social Radar solo propone discovery/revision.",
+      mode === "production"
+        ? "Production no usa examples salvo --use-examples; DEMO/TEST/MOON se excluyen salvo que esten en cartera/watchlist real."
+        : "Demo permite examples para validacion."
     ],
     actionCounts,
     inputSummary: mentionSelection.inputSummary,
@@ -553,6 +605,7 @@ function runSocialRadar() {
     generatedAt,
     inputSummary: mentionSelection.inputSummary,
     mentions,
+    mode,
     sources: sourceIndex
   });
 
@@ -564,6 +617,7 @@ function runSocialRadar() {
     consoleReport: renderConsoleReport({
       actionCounts,
       inputSummary: mentionSelection.inputSummary,
+      mode,
       mentions,
       watchlistMatchCounts
     }),

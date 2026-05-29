@@ -2,7 +2,13 @@
 
 const fs = require("fs");
 const path = require("path");
-const { BACKTESTS_DIR } = require("./storage");
+const { BACKTESTS_DIR, DATA_DIR } = require("./storage");
+const {
+  buildRealTickerSet,
+  productionAllowsTicker,
+  resolveRuntimeMode,
+  shouldUseDemoExamples
+} = require("./runtimeMode");
 const { isFiniteNumber, normalizeTicker } = require("./validators");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
@@ -11,6 +17,8 @@ const OUTPUT_DIR = path.join(BACKTESTS_DIR, "social-inbox");
 const INBOX_PATH = path.join(EXAMPLES_DIR, "social-inbox.example.json");
 const SOURCES_PATH = path.join(EXAMPLES_DIR, "social-sources.example.json");
 const EXISTING_MENTIONS_PATH = path.join(EXAMPLES_DIR, "social-mentions.example.json");
+const POSITIONS_PATH = path.join(DATA_DIR, "positions.json");
+const WATCHLIST_PATH = path.join(DATA_DIR, "watchlist.json");
 const NORMALIZED_PATH = path.join(OUTPUT_DIR, "normalized-mentions.json");
 const SUMMARY_PATH = path.join(OUTPUT_DIR, "summary.md");
 const VALID_CONFIDENCE = new Set(["low", "medium", "high"]);
@@ -90,6 +98,23 @@ function buildExistingMentionIds(existingMentionsPayload) {
       .map((mention) => mention.mentionId)
       .filter(hasText)
   );
+}
+
+function readRealTickerInputs() {
+  return {
+    positions: readJsonIfExists(POSITIONS_PATH) || { positions: [] },
+    watchlist: readJsonIfExists(WATCHLIST_PATH) || { watchlist: [] }
+  };
+}
+
+function selectInboxEntries({ entries, mode, realTickers, useExamples }) {
+  if (mode === "demo" || useExamples) {
+    return entries.filter((entry) =>
+      mode === "demo" || productionAllowsTicker(entry.ticker, realTickers)
+    );
+  }
+
+  return [];
 }
 
 function makeMentionId(entry, index, existingIds) {
@@ -210,7 +235,7 @@ function renderRow(cells) {
   return `| ${cells.join(" | ")} |`;
 }
 
-function renderSummary({ errorCounts, generatedAt, normalizedMentions, sourceCounts }) {
+function renderSummary({ errorCounts, generatedAt, mode, normalizedMentions, sourceCounts, sourceMode }) {
   const valid = normalizedMentions.filter((mention) => mention.isValidForRadar);
   const invalid = normalizedMentions.filter((mention) => !mention.isValidForRadar);
   const lines = [];
@@ -218,7 +243,7 @@ function renderSummary({ errorCounts, generatedAt, normalizedMentions, sourceCou
   lines.push("# WALY Social Inbox");
   lines.push("");
   lines.push(`Generado: ${generatedAt}`);
-  lines.push("Modo: manual/read-only; no red, no scraping, no login, no paywalls, no opera.");
+  lines.push(`Modo: ${mode}; input: ${sourceMode}; no red, no scraping, no login, no paywalls, no opera.`);
   lines.push("");
   lines.push("## 1. Resumen");
   lines.push(`- Entradas leidas: ${normalizedMentions.length}`);
@@ -270,6 +295,7 @@ function renderConsoleReport(result) {
 
   return [
     "WALY Social Inbox generado.",
+    `Mode: ${result.mode} | input=${result.sourceMode}`,
     `Entradas leidas: ${result.normalizedMentions.length}`,
     `Validas para radar: ${result.summary.validForRadar}`,
     `Con errores: ${result.summary.invalidForRadar}`,
@@ -280,13 +306,28 @@ function renderConsoleReport(result) {
   ].join("\n");
 }
 
-function runSocialInbox() {
+function runSocialInbox(options = {}) {
+  const mode = resolveRuntimeMode(options);
+  const useExamples = shouldUseDemoExamples(options);
   const inboxPayload = readJson(INBOX_PATH);
   const sourcesPayload = readJson(SOURCES_PATH);
   const existingMentionsPayload = readJsonIfExists(EXISTING_MENTIONS_PATH);
+  const realTickerInputs = readRealTickerInputs();
+  const realTickers = buildRealTickerSet(realTickerInputs);
   const sourceIndex = buildSourceIndex(sourcesPayload);
   const existingIds = buildExistingMentionIds(existingMentionsPayload);
-  const entries = Array.isArray(inboxPayload.entries) ? inboxPayload.entries : [];
+  const rawEntries = Array.isArray(inboxPayload.entries) ? inboxPayload.entries : [];
+  const entries = selectInboxEntries({
+    entries: rawEntries,
+    mode,
+    realTickers,
+    useExamples
+  });
+  const sourceMode = mode === "demo"
+    ? "demo examples"
+    : useExamples
+      ? "explicit examples fallback"
+      : "production real-data only";
   const generatedAt = new Date().toISOString();
   const normalizedMentions = entries.map((entry, index) => normalizeEntry(entry, index, sourceIndex, existingIds));
   const errorCounts = collectErrorCounts(normalizedMentions);
@@ -300,26 +341,34 @@ function runSocialInbox() {
     inputs: {
       inboxPath: formatRelative(INBOX_PATH),
       optionalExistingMentionsPath: fs.existsSync(EXISTING_MENTIONS_PATH) ? formatRelative(EXISTING_MENTIONS_PATH) : null,
-      sourcesPath: formatRelative(SOURCES_PATH)
+      positionsPath: formatRelative(POSITIONS_PATH),
+      sourcesPath: formatRelative(SOURCES_PATH),
+      watchlistPath: formatRelative(WATCHLIST_PATH)
     },
-    mode: "manual-read-only",
+    mode,
     notes: [
       "No opera.",
       "No usa red.",
       "No scraping, no login, no paywalls.",
       "No toca positions, outcomes ni data/social_signals.json.",
-      "Salida compatible con Social Radar, reviewStatus pending."
+      "Salida compatible con Social Radar, reviewStatus pending.",
+      mode === "production"
+        ? "Production no usa examples salvo --use-examples; DEMO/TEST/MOON se excluyen salvo que esten en cartera/watchlist real."
+        : "Demo permite examples para validacion."
     ],
     errorCounts,
     normalizedMentions,
+    sourceMode,
     sourceCounts,
     summary
   };
   const markdown = renderSummary({
     errorCounts,
     generatedAt,
+    mode,
     normalizedMentions,
-    sourceCounts
+    sourceCounts,
+    sourceMode
   });
 
   writeJson(NORMALIZED_PATH, payload);
@@ -329,7 +378,9 @@ function runSocialInbox() {
     ...payload,
     consoleReport: renderConsoleReport({
       errorCounts,
+      mode,
       normalizedMentions,
+      sourceMode,
       summary
     }),
     paths: {
