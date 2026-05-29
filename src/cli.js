@@ -32,6 +32,7 @@ const { runSocialSourceTracker } = require("./socialSourceTracker");
 const { runTimingEngine } = require("./timingEngine");
 const { runTrainTestEngine } = require("./trainTestEngine");
 const { syncUniverse } = require("./universeEngine");
+const { runWalyDaily } = require("./walyDailyRun");
 const { runWalyHealth, runWalyPipeline } = require("./walyPipeline");
 const { parseRuntimeOptions } = require("./runtimeMode");
 const {
@@ -75,6 +76,7 @@ function printUsage() {
   node src/cli.js sizing-engine
   node src/cli.js train-test-engine
   node src/cli.js post-mortem-engine
+  node src/cli.js waly-daily
   node src/cli.js waly-pipeline
   node src/cli.js waly-health
   Opciones: --mode production | --mode demo | --use-examples
@@ -441,6 +443,11 @@ async function main() {
       }
       case "post-mortem-engine": {
         const result = runPostMortemEngine();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "waly-daily": {
+        const result = await runWalyDaily();
         console.log(result.consoleReport);
         break;
       }
