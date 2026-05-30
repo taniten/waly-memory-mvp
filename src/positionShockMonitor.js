@@ -164,6 +164,9 @@ function analyzePosition(item, inputs) {
   const requireNewsCheck = requireManualReview;
   const noAdd = requireManualReview;
   const freezeOrWorse = SHOCK_RANK[shockSeverity] >= SHOCK_RANK.freeze_position;
+  const missingData = [
+    !isFiniteNumber(dayChangePct) ? "dayChangePct" : null
+  ].filter(Boolean);
 
   return {
     avgPrice: isFiniteNumber(avgPrice) ? avgPrice : null,
@@ -174,6 +177,7 @@ function analyzePosition(item, inputs) {
     lastDataDate: marketData.lastDataDate,
     lastPrice: isFiniteNumber(lastPrice) ? lastPrice : null,
     marketDataSource: marketData.source,
+    missingData,
     newsChecklist: requireNewsCheck ? NEWS_CHECKLIST : [],
     noAdd,
     qty: isFiniteNumber(qty) ? qty : null,
@@ -248,6 +252,7 @@ function buildPositionShockPayload(options = {}) {
     mode: "read-only",
     newsChecklist: NEWS_CHECKLIST,
     rows,
+    safeToOperate: false,
     shockEvents,
     summary: {
       activePositions: rows.length,

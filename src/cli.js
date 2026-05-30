@@ -6,6 +6,7 @@ const { generateBacktestReport } = require("./backtestEngine");
 const { runCatalystEngine } = require("./catalystEngine");
 const { runDailyCockpit } = require("./dailyCockpit");
 const { runForwardSnapshotLog } = require("./forwardSnapshotLogger");
+const { runGuardrailRegressionTests } = require("./guardrailRegressionTests");
 const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktestEngine");
 const { runHistoricalCatalystDataset } = require("./historicalCatalystDataset");
 const { runHistoricalReplayEngine } = require("./historicalReplayEngine");
@@ -69,6 +70,7 @@ function printUsage() {
   node src/cli.js reversal-scan <config-json>
   node src/cli.js short-scan <config-json>
   node src/cli.js multibagger-lab <config-json>
+  node src/cli.js guardrail-regression-tests
   node src/cli.js pre-catalyst-exit-guard
   node src/cli.js position-shock-monitor
   node src/cli.js daily-cockpit
@@ -403,6 +405,14 @@ async function main() {
         console.log(`Multibaggers: ${result.summary.multibaggerCount}`);
         console.log(`hit100: ${result.summary.hit100 === null ? "n/d" : `${result.summary.hit100}%`}`);
         console.log(`Errores: ${result.summary.errorCount}`);
+        break;
+      }
+      case "guardrail-regression-tests": {
+        const result = runGuardrailRegressionTests();
+        console.log(result.consoleReport);
+        if (!result.passed) {
+          process.exitCode = 1;
+        }
         break;
       }
       case "pre-catalyst-exit-guard": {

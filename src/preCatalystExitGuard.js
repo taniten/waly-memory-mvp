@@ -289,6 +289,7 @@ function buildPreCatalystExitGuardPayload(options = {}) {
     generatedAt: new Date().toISOString(),
     mode: "read-only",
     rows,
+    safeToOperate: false,
     summary: {
       activePositions: rows.length,
       binaryAlerts: alertRows.length,
