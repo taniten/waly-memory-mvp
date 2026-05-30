@@ -19,6 +19,11 @@ const {
   productionAllowsTicker,
   resolveRuntimeMode
 } = require("./runtimeMode");
+const {
+  EXIT_ACTIONS,
+  buildPreCatalystExitGuardPayload,
+  writePreCatalystExitGuardOutputs
+} = require("./preCatalystExitGuard");
 const { buildSizingPayload } = require("./sizingEngine");
 const { buildTimingPayload } = require("./timingEngine");
 const { buildTrainTestPayload } = require("./trainTestEngine");
@@ -216,7 +221,7 @@ function dataFreshness(inputs) {
   };
 }
 
-function buildHealth({ conflicts, inputs, missingData, prohibitedActionHits, redFlags }) {
+function buildHealth({ conflicts, inputs, missingData, preCatalystExitGuard, prohibitedActionHits, redFlags }) {
   const modulesLoaded = [
     "realSignalLog",
     "catalystEngine",
@@ -224,6 +229,7 @@ function buildHealth({ conflicts, inputs, missingData, prohibitedActionHits, red
     "sizingEngine",
     "trainTestEngine",
     "postMortemEngine",
+    "preCatalystExitGuard",
     "walyPipeline",
     inputs.dailyCockpit ? "daily-cockpit" : null,
     inputs.selectorEngine ? "selector-engine" : null,
@@ -259,10 +265,20 @@ function buildHealth({ conflicts, inputs, missingData, prohibitedActionHits, red
     reasons.push("red flags activas");
   }
 
+  if (preCatalystExitGuard && preCatalystExitGuard.summary && preCatalystExitGuard.summary.tickersToFreeze.length > 0) {
+    reasons.push("pre-catalyst exit guard activo");
+  }
+
   let healthStatus = "green";
   if (prohibitedActionHits.length > 0 || modulesLoaded.length < 7) {
     healthStatus = "red";
-  } else if (conflicts.length > 0 || modulesMissing.length > 0 || missingData.length > 0 || redFlags.length > 0) {
+  } else if (
+    conflicts.length > 0 ||
+    modulesMissing.length > 0 ||
+    missingData.length > 0 ||
+    redFlags.length > 0 ||
+    (preCatalystExitGuard && preCatalystExitGuard.summary && preCatalystExitGuard.summary.tickersToFreeze.length > 0)
+  ) {
     healthStatus = "yellow";
   }
 
@@ -277,9 +293,12 @@ function buildHealth({ conflicts, inputs, missingData, prohibitedActionHits, red
   };
 }
 
-function applyGuardrails({ catalyst, inputs, selectorRanking, sizing, socialSignals, timing }) {
+function applyGuardrails({ catalyst, inputs, preCatalystExitGuard, selectorRanking, sizing, socialSignals, timing }) {
   const timingByTicker = indexByTicker(timing.rows);
   const catalystMap = catalystByTicker(catalyst.rows);
+  const exitGuardByTicker = new Map(
+    ((preCatalystExitGuard && preCatalystExitGuard.rows) || []).map((row) => [row.ticker, row])
+  );
   const conflicts = [];
   const correctedFalsePositives = [];
   const manualCandidateBlocklist = new Set();
@@ -296,6 +315,16 @@ function applyGuardrails({ catalyst, inputs, selectorRanking, sizing, socialSign
       pipelineRedFlags: [...(row.redFlags || [])]
     };
     const socialScore = row.components && row.components.socialScore;
+    const exitGuardRow = exitGuardByTicker.get(row.ticker);
+
+    if (exitGuardRow && EXIT_ACTIONS.has(exitGuardRow.suggestedAction)) {
+      next.pipelineAction = "reducir_riesgo_sugerido";
+      next.pipelineClassification = lowerClassification(lowerClassification(next.pipelineClassification));
+      next.pipelineRedFlags.push(`pre-catalyst exit guard: ${exitGuardRow.suggestedAction}`);
+      redFlags.push(`${row.ticker}: ${exitGuardRow.suggestedAction} por ${exitGuardRow.binaryType} ${exitGuardRow.window}`);
+      conflicts.push(`${row.ticker}: posicion activa con catalyst binario cercano requiere decision de salida/reduccion`);
+      correctedFalsePositives.push(`${row.ticker}: mantener/B watch bloqueado por pre-catalyst exit guard`);
+    }
 
     if (/^A/.test(row.classification || "") && (!timingRow || timingRow.status !== "trigger_confirmed")) {
       next.pipelineAction = "candidato_manual";
@@ -338,10 +367,20 @@ function applyGuardrails({ catalyst, inputs, selectorRanking, sizing, socialSign
   const hardenedSizingRows = sizing.rows.map((row) => {
     const selectorRow = selectorByTicker.get(row.ticker);
     const timingRow = timingByTicker.get(row.ticker);
+    const exitGuardRow = exitGuardByTicker.get(row.ticker);
     const next = {
       ...row,
       redFlags: [...(row.redFlags || [])]
     };
+
+    if (exitGuardRow && EXIT_ACTIONS.has(exitGuardRow.suggestedAction)) {
+      next.maxNewPositionPct = 0;
+      next.sizingAction = "reduce_risk";
+      next.suggestedShares = 0;
+      next.suggestedSizeUSD = 0;
+      next.redFlags.push(`pre-catalyst exit guard: ${exitGuardRow.suggestedAction}`);
+      correctedFalsePositives.push(`${row.ticker}: sizing forzado a reduce_risk por catalyst binario cercano`);
+    }
 
     if (row.suggestedSizeUSD > 0 && (!timingRow || timingRow.status !== "trigger_confirmed")) {
       next.maxNewPositionPct = 0;
@@ -522,6 +561,15 @@ function renderSummary(payload) {
     payload.portfolio.map((row) => [row.ticker, row.quantity, fmt(row.avgPrice, 2), fmt(row.lastPrice, 2), row.action])
   ));
   lines.push("");
+  lines.push("## Pre-Catalyst Exit Guard");
+  if (!payload.preCatalystExitGuard || !payload.preCatalystExitGuard.rows.length) {
+    lines.push("- Sin posiciones activas evaluadas.");
+  } else {
+    payload.preCatalystExitGuard.rows.forEach((row) => {
+      lines.push(`- ${row.ticker}: ${row.suggestedAction} | ${row.binaryType} | ${row.window} | days ${row.daysToCatalyst === null ? "n/d" : row.daysToCatalyst}`);
+    });
+  }
+  lines.push("");
   lines.push("## Catalyst engine");
   lines.push(renderTable(
     ["Ticker", "Tipo", "Fecha", "Dias", "Riesgo", "Score", "Falta"],
@@ -610,11 +658,13 @@ function buildPipelinePayload(options = {}) {
     sizingPayload: sizing,
     timingPayload: timing
   }).payload;
+  const preCatalystExitGuard = buildPreCatalystExitGuardPayload({ inputs }).payload;
   const rawSelectorRanking = (inputs.selectorEngine && inputs.selectorEngine.ranking) || [];
   const socialSignals = socialRows(inputs);
   const guardrails = applyGuardrails({
     catalyst,
     inputs,
+    preCatalystExitGuard,
     selectorRanking: rawSelectorRanking,
     sizing,
     socialSignals,
@@ -628,6 +678,9 @@ function buildPipelinePayload(options = {}) {
     ...catalyst.rows.filter((row) => row.binaryRisk === "high").map((row) => `${row.ticker}: binaryRisk high`),
     ...timing.rows.flatMap((row) => row.redFlags.map((flag) => `${row.ticker}: ${flag}`)),
     ...guardedSizing.rows.flatMap((row) => row.redFlags.map((flag) => `${row.ticker}: ${flag}`)),
+    ...preCatalystExitGuard.rows
+      .filter((row) => EXIT_ACTIONS.has(row.suggestedAction))
+      .map((row) => `${row.ticker}: ${row.suggestedAction}`),
     ...guardrails.redFlags
   ];
   const decision = determineDecision({
@@ -660,6 +713,7 @@ function buildPipelinePayload(options = {}) {
     conflicts: guardrails.conflicts,
     inputs,
     missingData,
+    preCatalystExitGuard,
     prohibitedActionHits,
     redFlags: uniqueRedFlags
   });
@@ -689,6 +743,7 @@ function buildPipelinePayload(options = {}) {
     mode,
     pipelineMode: "read-only-research",
     portfolio: portfolioRows(inputs),
+    preCatalystExitGuard,
     postMortem,
     prohibitedActionHits,
     redFlags: uniqueRedFlags,
@@ -715,11 +770,13 @@ function writePipelineOutputs(payload) {
   writePillarJson("sizing-engine.json", payload.sizing);
   writePillarJson("train-test-engine.json", payload.trainTest);
   writePillarJson("post-mortem-engine.json", payload.postMortem);
+  const preCatalystExitGuardPaths = writePreCatalystExitGuardOutputs(payload.preCatalystExitGuard);
   const latestPath = writePillarJson(path.basename(PIPELINE_LATEST_PATH), payload);
   const summaryPath = writePillarText("summary.md", renderSummary(payload));
 
   return {
     latestPath,
+    preCatalystExitGuardPaths,
     summaryPath
   };
 }
@@ -734,6 +791,7 @@ function renderConsoleReport(payload) {
     `Ranking: ${top.join(" | ") || "missingData"}`,
     `Operables: ${payload.decision.operables.join(", ") || "ninguno"}`,
     `Manual candidates: ${payload.decision.manualCandidates.join(", ") || "ninguno"}`,
+    `Exit guard: ${payload.preCatalystExitGuard.summary.tickersToFreeze.join(", ") || "ninguno"}`,
     `Conflictos: ${payload.conflicts.join(" | ") || "ninguno"}`,
     `Decision: ${payload.decisionFinal} | ${payload.decision.finalDecision}`,
     `summary.md: ${formatRelative(path.join(OUTPUT_DIR, "summary.md"))}`,
@@ -745,6 +803,11 @@ function renderHealthConsoleReport(payload) {
   const decisionFinal = payload.decisionFinal || payload.decision && payload.decision.finalAction || "missingData";
   const operables = payload.decision && payload.decision.operables || [];
   const manualCandidates = payload.decision && payload.decision.manualCandidates || [];
+  const guardTickers =
+    payload.preCatalystExitGuard &&
+    payload.preCatalystExitGuard.summary &&
+    payload.preCatalystExitGuard.summary.tickersToFreeze ||
+    [];
 
   return [
     "WALY Health Check.",
@@ -753,6 +816,7 @@ function renderHealthConsoleReport(payload) {
     `decisionFinal: ${decisionFinal}`,
     `operables: ${operables.join(", ") || "ninguno"}`,
     `manualCandidates: ${manualCandidates.join(", ") || "ninguno"}`,
+    `preCatalystExitGuard: ${guardTickers.join(", ") || "ninguno"}`,
     `missingData: ${(payload.missingData || []).join(" | ") || "ninguna"}`,
     `conflicts: ${(payload.conflicts || []).join(" | ") || "ninguno"}`,
     `safeToReview: ${payload.safeToReview ? "true" : "false"}`,

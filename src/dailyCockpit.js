@@ -488,8 +488,6 @@ async function runDailyCockpit() {
   const updatedWatchlist = updateWatchlistMarketData(originalWatchlist, marketDataByTicker);
 
   assertPositionInvariants(originalPositions, updatedPositions);
-  writeJsonFile(POSITIONS_PATH, updatedPositions);
-  writeJsonFile(WATCHLIST_PATH, updatedWatchlist);
 
   const portfolioReview = runPortfolioReview();
   const opportunityRouter = runOpportunityRouter({
@@ -519,7 +517,9 @@ async function runDailyCockpit() {
       "No usa Binance.",
       "No toca outcomes.",
       "No modifica quantity ni avgPrice.",
-      "Solo actualiza lastPrice/marketData en positions/watchlist.",
+      "No modifica data/positions.json.",
+      "No modifica data/watchlist.json.",
+      "Market data se usa solo para output del cockpit.",
       "Opportunity-router corrio en modo no-write; salida persistida solo en daily-cockpit."
     ],
     currentDate: getCurrentDateInTimezone(settings.timezone),

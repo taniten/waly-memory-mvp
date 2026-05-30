@@ -86,6 +86,15 @@ function renderSummary(result) {
   lines.push("## Cartera actual");
   lines.push(renderPortfolio(result.portfolio));
   lines.push("");
+  lines.push("## Pre-Catalyst Exit Guard");
+  if (!result.preCatalystExitGuard || !result.preCatalystExitGuard.rows.length) {
+    lines.push("- Sin posiciones activas evaluadas.");
+  } else {
+    result.preCatalystExitGuard.rows.forEach((row) => {
+      lines.push(`- ${row.ticker}: ${row.suggestedAction} | ${row.binaryType} | ${row.window} | days ${row.daysToCatalyst === null ? "n/d" : row.daysToCatalyst}`);
+    });
+  }
+  lines.push("");
   lines.push("## Forward snapshot");
   lines.push(`- snapshotId: ${result.forwardSnapshot.snapshotId}`);
   lines.push(`- status: ${result.forwardSnapshot.status}`);
@@ -109,6 +118,7 @@ function renderConsoleReport(result) {
     `healthStatus: ${result.healthStatus}`,
     `operables: ${result.operables.join(", ") || "ninguno"}`,
     `manualCandidates: ${result.manualCandidates.join(", ") || "ninguno"}`,
+    `preCatalystExitGuard: ${result.preCatalystExitGuard.summary.tickersToFreeze.join(", ") || "ninguno"}`,
     `ranking top 5: ${top.join(" | ") || "ninguno"}`,
     `forwardSnapshot: ${result.forwardSnapshot.status} | ${result.forwardSnapshot.snapshotId}`,
     `safeToReview: ${result.safeToReview ? "true" : "false"}`,
@@ -154,6 +164,7 @@ async function runWalyDaily() {
     moduleOutputs: {
       dailyCockpit: dailyCockpit.paths,
       forwardSnapshot: forwardSnapshot.paths,
+      preCatalystExitGuard: pipeline.paths.preCatalystExitGuardPaths || null,
       selector: selector.paths,
       walyPipeline: pipeline.paths
     },
@@ -164,6 +175,7 @@ async function runWalyDaily() {
       summaryPath: SUMMARY_PATH
     },
     portfolio: pipeline.portfolio || [],
+    preCatalystExitGuard: pipeline.preCatalystExitGuard,
     ranking: latestSnapshot.ranking || [],
     safeToOperate: false,
     safeToReview: health.safeToReview === true
