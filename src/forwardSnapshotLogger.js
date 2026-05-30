@@ -149,6 +149,7 @@ function normalizeRankingRow({ dailyRow, pipelineRow, selectorRow }) {
     ],
     noBuyDirect: true,
     outcomeStatus: "pending",
+    override: pipelineRow && pipelineRow.positionShockMonitor || null,
     price: round(firstNumber(
       pipelineRow && pipelineRow.marketData && pipelineRow.marketData.price,
       selectorRow && selectorRow.marketData && selectorRow.marketData.price,
@@ -158,6 +159,9 @@ function normalizeRankingRow({ dailyRow, pipelineRow, selectorRow }) {
       ...((pipelineRow && pipelineRow.pipelineRedFlags) || []),
       ...((pipelineRow && pipelineRow.redFlags) || []),
       ...((selectorRow && selectorRow.redFlags) || [])
+    ],
+    guardFlags: [
+      ...((pipelineRow && pipelineRow.guardFlags) || [])
     ],
     relVol: round(firstNumber(
       pipelineRow && pipelineRow.marketData && pipelineRow.marketData.relativeVolume,
@@ -202,6 +206,7 @@ function buildRanking({ dailyCockpit, pipeline, selector }) {
     .map((row) => ({
       ...row,
       missingData: [...new Set(row.missingData)].sort(),
+      guardFlags: [...new Set(row.guardFlags)].sort(),
       redFlags: [...new Set(row.redFlags)].sort()
     }));
 }

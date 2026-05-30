@@ -24,6 +24,11 @@ const {
   buildPreCatalystExitGuardPayload,
   writePreCatalystExitGuardOutputs
 } = require("./preCatalystExitGuard");
+const {
+  buildPositionShockPayload,
+  isFreezeOrWorse,
+  writePositionShockOutputs
+} = require("./positionShockMonitor");
 const { buildSizingPayload } = require("./sizingEngine");
 const { buildTimingPayload } = require("./timingEngine");
 const { buildTrainTestPayload } = require("./trainTestEngine");
@@ -221,7 +226,15 @@ function dataFreshness(inputs) {
   };
 }
 
-function buildHealth({ conflicts, inputs, missingData, preCatalystExitGuard, prohibitedActionHits, redFlags }) {
+function buildHealth({
+  conflicts,
+  inputs,
+  missingData,
+  positionShockMonitor,
+  preCatalystExitGuard,
+  prohibitedActionHits,
+  redFlags
+}) {
   const modulesLoaded = [
     "realSignalLog",
     "catalystEngine",
@@ -230,6 +243,7 @@ function buildHealth({ conflicts, inputs, missingData, preCatalystExitGuard, pro
     "trainTestEngine",
     "postMortemEngine",
     "preCatalystExitGuard",
+    "positionShockMonitor",
     "walyPipeline",
     inputs.dailyCockpit ? "daily-cockpit" : null,
     inputs.selectorEngine ? "selector-engine" : null,
@@ -269,6 +283,10 @@ function buildHealth({ conflicts, inputs, missingData, preCatalystExitGuard, pro
     reasons.push("pre-catalyst exit guard activo");
   }
 
+  if (positionShockMonitor && positionShockMonitor.summary && positionShockMonitor.summary.freezeOrWorse > 0) {
+    reasons.push("position shock monitor activo");
+  }
+
   let healthStatus = "green";
   if (prohibitedActionHits.length > 0 || modulesLoaded.length < 7) {
     healthStatus = "red";
@@ -277,7 +295,8 @@ function buildHealth({ conflicts, inputs, missingData, preCatalystExitGuard, pro
     modulesMissing.length > 0 ||
     missingData.length > 0 ||
     redFlags.length > 0 ||
-    (preCatalystExitGuard && preCatalystExitGuard.summary && preCatalystExitGuard.summary.tickersToFreeze.length > 0)
+    (preCatalystExitGuard && preCatalystExitGuard.summary && preCatalystExitGuard.summary.tickersToFreeze.length > 0) ||
+    (positionShockMonitor && positionShockMonitor.summary && positionShockMonitor.summary.freezeOrWorse > 0)
   ) {
     healthStatus = "yellow";
   }
@@ -293,11 +312,45 @@ function buildHealth({ conflicts, inputs, missingData, preCatalystExitGuard, pro
   };
 }
 
-function applyGuardrails({ catalyst, inputs, preCatalystExitGuard, selectorRanking, sizing, socialSignals, timing }) {
+function capShockClassification(classification) {
+  if (classification === "discard") {
+    return "discard";
+  }
+
+  return "C research";
+}
+
+function combinedGuardFlags(exitGuardRow, shockRow) {
+  const flags = [];
+
+  if (exitGuardRow && EXIT_ACTIONS.has(exitGuardRow.suggestedAction)) {
+    flags.push("preCatalystExitGuard");
+  }
+
+  if (shockRow && isFreezeOrWorse(shockRow)) {
+    flags.push("positionShockMonitor", "thesisReviewRequired");
+  }
+
+  return flags;
+}
+
+function applyGuardrails({
+  catalyst,
+  inputs,
+  positionShockMonitor,
+  preCatalystExitGuard,
+  selectorRanking,
+  sizing,
+  socialSignals,
+  timing
+}) {
   const timingByTicker = indexByTicker(timing.rows);
   const catalystMap = catalystByTicker(catalyst.rows);
   const exitGuardByTicker = new Map(
     ((preCatalystExitGuard && preCatalystExitGuard.rows) || []).map((row) => [row.ticker, row])
+  );
+  const shockByTicker = new Map(
+    ((positionShockMonitor && positionShockMonitor.rows) || []).map((row) => [row.ticker, row])
   );
   const conflicts = [];
   const correctedFalsePositives = [];
@@ -312,10 +365,13 @@ function applyGuardrails({ catalyst, inputs, preCatalystExitGuard, selectorRanki
       ...row,
       pipelineAction: row.actionSuggested,
       pipelineClassification: row.classification,
-      pipelineRedFlags: [...(row.redFlags || [])]
+      pipelineRedFlags: [...(row.redFlags || [])],
+      guardFlags: [...(row.guardFlags || [])]
     };
     const socialScore = row.components && row.components.socialScore;
     const exitGuardRow = exitGuardByTicker.get(row.ticker);
+    const shockRow = shockByTicker.get(row.ticker);
+    const strongShock = shockRow && isFreezeOrWorse(shockRow);
 
     if (exitGuardRow && EXIT_ACTIONS.has(exitGuardRow.suggestedAction)) {
       next.pipelineAction = "reducir_riesgo_sugerido";
@@ -326,7 +382,27 @@ function applyGuardrails({ catalyst, inputs, preCatalystExitGuard, selectorRanki
       correctedFalsePositives.push(`${row.ticker}: mantener/B watch bloqueado por pre-catalyst exit guard`);
     }
 
-    if (/^A/.test(row.classification || "") && (!timingRow || timingRow.status !== "trigger_confirmed")) {
+    if (strongShock) {
+      next.pipelineAction = "revisar_manual";
+      next.pipelineClassification = capShockClassification(next.pipelineClassification);
+      next.positionShockMonitor = {
+        dayChangePct: shockRow.dayChangePct,
+        noAdd: true,
+        requireManualReview: true,
+        requireNewsCheck: true,
+        selectorOverride: shockRow.selectorOverride,
+        shockSeverity: shockRow.shockSeverity,
+        suggestedAction: shockRow.suggestedAction
+      };
+      next.pipelineRedFlags.push(`position shock monitor: ${shockRow.shockSeverity} day ${shockRow.dayChangePct}%`);
+      redFlags.push(`${row.ticker}: ${shockRow.shockSeverity} por caida diaria ${shockRow.dayChangePct}%`);
+      conflicts.push(`${row.ticker}: shock fuerte en posicion activa requiere news check y revision manual`);
+      correctedFalsePositives.push(`${row.ticker}: classification positiva bloqueada por position shock monitor`);
+    }
+
+    combinedGuardFlags(exitGuardRow, shockRow).forEach((flag) => next.guardFlags.push(flag));
+
+    if (!strongShock && /^A/.test(row.classification || "") && (!timingRow || timingRow.status !== "trigger_confirmed")) {
       next.pipelineAction = "candidato_manual";
       next.pipelineClassification = lowerClassification(next.pipelineClassification);
       next.pipelineRedFlags.push("selector A/A+ sin timing confirmado");
@@ -342,7 +418,7 @@ function applyGuardrails({ catalyst, inputs, preCatalystExitGuard, selectorRanki
       conflicts.push(`${row.ticker}: ticker discard aparecia como candidato`);
     }
 
-    if (typeof socialScore === "number" && socialScore >= 7 && !hasClearCatalyst(row, catalystRow)) {
+    if (!strongShock && typeof socialScore === "number" && socialScore >= 7 && !hasClearCatalyst(row, catalystRow)) {
       if (next.pipelineClassification === "discard") {
         next.pipelineAction = "descartar";
         manualCandidateBlocklist.add(row.ticker);
@@ -359,6 +435,7 @@ function applyGuardrails({ catalyst, inputs, preCatalystExitGuard, selectorRanki
       conflicts.push(`${row.ticker}: social alto sin catalyst verificable`);
     }
 
+    next.guardFlags = [...new Set(next.guardFlags)];
     next.pipelineRedFlags = [...new Set(next.pipelineRedFlags)];
     return next;
   });
@@ -368,8 +445,11 @@ function applyGuardrails({ catalyst, inputs, preCatalystExitGuard, selectorRanki
     const selectorRow = selectorByTicker.get(row.ticker);
     const timingRow = timingByTicker.get(row.ticker);
     const exitGuardRow = exitGuardByTicker.get(row.ticker);
+    const shockRow = shockByTicker.get(row.ticker);
+    const strongShock = shockRow && isFreezeOrWorse(shockRow);
     const next = {
       ...row,
+      guardFlags: [...(row.guardFlags || [])],
       redFlags: [...(row.redFlags || [])]
     };
 
@@ -382,7 +462,26 @@ function applyGuardrails({ catalyst, inputs, preCatalystExitGuard, selectorRanki
       correctedFalsePositives.push(`${row.ticker}: sizing forzado a reduce_risk por catalyst binario cercano`);
     }
 
-    if (row.suggestedSizeUSD > 0 && (!timingRow || timingRow.status !== "trigger_confirmed")) {
+    if (strongShock) {
+      next.maxNewPositionPct = 0;
+      next.noAdd = true;
+      next.positionShockMonitor = {
+        dayChangePct: shockRow.dayChangePct,
+        requireManualReview: true,
+        requireNewsCheck: true,
+        shockSeverity: shockRow.shockSeverity,
+        suggestedAction: shockRow.suggestedAction
+      };
+      next.sizingAction = "reduce_risk";
+      next.suggestedShares = 0;
+      next.suggestedSizeUSD = 0;
+      next.redFlags.push(`position shock monitor: ${shockRow.shockSeverity}`);
+      correctedFalsePositives.push(`${row.ticker}: sizing forzado a $0 por shock fuerte`);
+    }
+
+    combinedGuardFlags(exitGuardRow, shockRow).forEach((flag) => next.guardFlags.push(flag));
+
+    if (!strongShock && row.suggestedSizeUSD > 0 && (!timingRow || timingRow.status !== "trigger_confirmed")) {
       next.maxNewPositionPct = 0;
       next.sizingAction = "no_add";
       next.suggestedShares = 0;
@@ -392,7 +491,7 @@ function applyGuardrails({ catalyst, inputs, preCatalystExitGuard, selectorRanki
       correctedFalsePositives.push(`${row.ticker}: sizing forzado a $0 por timing`);
     }
 
-    if (selectorRow && selectorRow.pipelineClassification === "discard" && row.suggestedSizeUSD > 0) {
+    if (!strongShock && selectorRow && selectorRow.pipelineClassification === "discard" && row.suggestedSizeUSD > 0) {
       next.maxNewPositionPct = 0;
       next.sizingAction = "no_add";
       next.suggestedShares = 0;
@@ -402,7 +501,7 @@ function applyGuardrails({ catalyst, inputs, preCatalystExitGuard, selectorRanki
       manualCandidateBlocklist.add(row.ticker);
     }
 
-    if (biotechExposurePct !== null && biotechExposurePct > 65 && row.suggestedSizeUSD > 0) {
+    if (!strongShock && biotechExposurePct !== null && biotechExposurePct > 65 && row.suggestedSizeUSD > 0) {
       next.maxNewPositionPct = 0;
       next.sizingAction = "no_add";
       next.suggestedShares = 0;
@@ -412,7 +511,7 @@ function applyGuardrails({ catalyst, inputs, preCatalystExitGuard, selectorRanki
       correctedFalsePositives.push(`${row.ticker}: sizing bloqueado por exposicion catalyst >65%`);
     }
 
-    if (row.currentPositionPct !== null && row.currentPositionPct > 30) {
+    if (!strongShock && row.currentPositionPct !== null && row.currentPositionPct > 30) {
       next.maxNewPositionPct = 0;
       next.sizingAction = "no_add";
       next.suggestedShares = 0;
@@ -421,6 +520,7 @@ function applyGuardrails({ catalyst, inputs, preCatalystExitGuard, selectorRanki
       redFlags.push(`${row.ticker}: posicion individual >30% cartera`);
     }
 
+    next.guardFlags = [...new Set(next.guardFlags)];
     next.redFlags = [...new Set(next.redFlags)];
     return next;
   });
@@ -561,6 +661,15 @@ function renderSummary(payload) {
     payload.portfolio.map((row) => [row.ticker, row.quantity, fmt(row.avgPrice, 2), fmt(row.lastPrice, 2), row.action])
   ));
   lines.push("");
+  lines.push("## Shock Events");
+  if (!payload.shockEvents || !payload.shockEvents.length) {
+    lines.push("- Sin position shocks activos.");
+  } else {
+    payload.shockEvents.forEach((row) => {
+      lines.push(`- ${row.ticker}: ${row.shockSeverity} | day ${row.dayChangePct}% | relVol ${fmt(row.relVol, 3)} | action ${row.suggestedAction} | noAdd=${row.noAdd}`);
+    });
+  }
+  lines.push("");
   lines.push("## Pre-Catalyst Exit Guard");
   if (!payload.preCatalystExitGuard || !payload.preCatalystExitGuard.rows.length) {
     lines.push("- Sin posiciones activas evaluadas.");
@@ -659,11 +768,17 @@ function buildPipelinePayload(options = {}) {
     timingPayload: timing
   }).payload;
   const preCatalystExitGuard = buildPreCatalystExitGuardPayload({ inputs }).payload;
+  const positionShockMonitor = buildPositionShockPayload({
+    dailyRun: null,
+    inputs,
+    pipelineLatest: null
+  }).payload;
   const rawSelectorRanking = (inputs.selectorEngine && inputs.selectorEngine.ranking) || [];
   const socialSignals = socialRows(inputs);
   const guardrails = applyGuardrails({
     catalyst,
     inputs,
+    positionShockMonitor,
     preCatalystExitGuard,
     selectorRanking: rawSelectorRanking,
     sizing,
@@ -681,6 +796,7 @@ function buildPipelinePayload(options = {}) {
     ...preCatalystExitGuard.rows
       .filter((row) => EXIT_ACTIONS.has(row.suggestedAction))
       .map((row) => `${row.ticker}: ${row.suggestedAction}`),
+    ...positionShockMonitor.shockEvents.map((row) => `${row.ticker}: ${row.shockSeverity}`),
     ...guardrails.redFlags
   ];
   const decision = determineDecision({
@@ -713,6 +829,7 @@ function buildPipelinePayload(options = {}) {
     conflicts: guardrails.conflicts,
     inputs,
     missingData,
+    positionShockMonitor,
     preCatalystExitGuard,
     prohibitedActionHits,
     redFlags: uniqueRedFlags
@@ -743,6 +860,7 @@ function buildPipelinePayload(options = {}) {
     mode,
     pipelineMode: "read-only-research",
     portfolio: portfolioRows(inputs),
+    positionShockMonitor,
     preCatalystExitGuard,
     postMortem,
     prohibitedActionHits,
@@ -750,6 +868,7 @@ function buildPipelinePayload(options = {}) {
     safeToOperate: false,
     safeToReview: health.safeToReview,
     selectorRanking,
+    shockEvents: positionShockMonitor.shockEvents,
     signalLog,
     sizing: guardedSizing,
     socialSignals,
@@ -771,11 +890,13 @@ function writePipelineOutputs(payload) {
   writePillarJson("train-test-engine.json", payload.trainTest);
   writePillarJson("post-mortem-engine.json", payload.postMortem);
   const preCatalystExitGuardPaths = writePreCatalystExitGuardOutputs(payload.preCatalystExitGuard);
+  const positionShockMonitorPaths = writePositionShockOutputs(payload.positionShockMonitor);
   const latestPath = writePillarJson(path.basename(PIPELINE_LATEST_PATH), payload);
   const summaryPath = writePillarText("summary.md", renderSummary(payload));
 
   return {
     latestPath,
+    positionShockMonitorPaths,
     preCatalystExitGuardPaths,
     summaryPath
   };
@@ -783,6 +904,7 @@ function writePipelineOutputs(payload) {
 
 function renderConsoleReport(payload) {
   const top = payload.selectorRanking.slice(0, 5).map((row) => `${row.ticker}:${fmt(row.totalScore, 1)}:${row.pipelineClassification || row.classification}`);
+  const shocks = (payload.shockEvents || []).map((row) => `${row.ticker}:${row.shockSeverity}`);
 
   return [
     "WALY 7 Pillars Pipeline generado.",
@@ -792,6 +914,7 @@ function renderConsoleReport(payload) {
     `Operables: ${payload.decision.operables.join(", ") || "ninguno"}`,
     `Manual candidates: ${payload.decision.manualCandidates.join(", ") || "ninguno"}`,
     `Exit guard: ${payload.preCatalystExitGuard.summary.tickersToFreeze.join(", ") || "ninguno"}`,
+    `Shock events: ${shocks.join(", ") || "ninguno"}`,
     `Conflictos: ${payload.conflicts.join(" | ") || "ninguno"}`,
     `Decision: ${payload.decisionFinal} | ${payload.decision.finalDecision}`,
     `summary.md: ${formatRelative(path.join(OUTPUT_DIR, "summary.md"))}`,
@@ -808,6 +931,7 @@ function renderHealthConsoleReport(payload) {
     payload.preCatalystExitGuard.summary &&
     payload.preCatalystExitGuard.summary.tickersToFreeze ||
     [];
+  const shockEvents = payload.shockEvents || payload.positionShockMonitor && payload.positionShockMonitor.shockEvents || [];
 
   return [
     "WALY Health Check.",
@@ -817,6 +941,7 @@ function renderHealthConsoleReport(payload) {
     `operables: ${operables.join(", ") || "ninguno"}`,
     `manualCandidates: ${manualCandidates.join(", ") || "ninguno"}`,
     `preCatalystExitGuard: ${guardTickers.join(", ") || "ninguno"}`,
+    `shockEvents: ${shockEvents.map((row) => `${row.ticker}:${row.shockSeverity}`).join(", ") || "ninguno"}`,
     `missingData: ${(payload.missingData || []).join(" | ") || "ninguna"}`,
     `conflicts: ${(payload.conflicts || []).join(" | ") || "ninguno"}`,
     `safeToReview: ${payload.safeToReview ? "true" : "false"}`,

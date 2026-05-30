@@ -19,6 +19,7 @@ const { runPortfolioBacktest } = require("./portfolioBacktest");
 const { runPortfolioBacktestSweep } = require("./portfolioBacktestSweep");
 const { runPortfolioReview } = require("./portfolioEngine");
 const { runPreCatalystExitGuard } = require("./preCatalystExitGuard");
+const { runPositionShockMonitor } = require("./positionShockMonitor");
 const { runQualityGateBacktest } = require("./qualityGateBacktest");
 const { runRealSignalLog } = require("./realSignalLog");
 const { runReversalScan } = require("./reversalRadar");
@@ -69,6 +70,7 @@ function printUsage() {
   node src/cli.js short-scan <config-json>
   node src/cli.js multibagger-lab <config-json>
   node src/cli.js pre-catalyst-exit-guard
+  node src/cli.js position-shock-monitor
   node src/cli.js daily-cockpit
   node src/cli.js forward-snapshot-log
   node src/cli.js selector-engine
@@ -405,6 +407,11 @@ async function main() {
       }
       case "pre-catalyst-exit-guard": {
         const result = runPreCatalystExitGuard();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "position-shock-monitor": {
+        const result = runPositionShockMonitor();
         console.log(result.consoleReport);
         break;
       }

@@ -62,6 +62,16 @@ function renderPortfolio(portfolio) {
   ).join("\n");
 }
 
+function renderShockEvents(shockEvents) {
+  if (!Array.isArray(shockEvents) || shockEvents.length === 0) {
+    return "- Sin position shocks activos.";
+  }
+
+  return shockEvents.map((row) =>
+    `- ${row.ticker}: ${row.shockSeverity} | day ${row.dayChangePct}% | relVol ${row.relVol === null ? "n/d" : row.relVol} | accion ${row.suggestedAction} | noAdd=${row.noAdd ? "true" : "false"}`
+  ).join("\n");
+}
+
 function renderSummary(result) {
   const lines = [];
 
@@ -85,6 +95,9 @@ function renderSummary(result) {
   lines.push("");
   lines.push("## Cartera actual");
   lines.push(renderPortfolio(result.portfolio));
+  lines.push("");
+  lines.push("## Shock Events");
+  lines.push(renderShockEvents(result.shockEvents));
   lines.push("");
   lines.push("## Pre-Catalyst Exit Guard");
   if (!result.preCatalystExitGuard || !result.preCatalystExitGuard.rows.length) {
@@ -110,6 +123,7 @@ function renderConsoleReport(result) {
   const top = result.ranking.slice(0, 5).map((row) =>
     `${row.ticker}:${formatNumber(row.selectorScore)}:${row.classification || "n/d"}`
   );
+  const shocks = (result.shockEvents || []).map((row) => `${row.ticker}:${row.shockSeverity}:${row.suggestedAction}`);
 
   return [
     "WALY Daily Run generado.",
@@ -118,6 +132,7 @@ function renderConsoleReport(result) {
     `healthStatus: ${result.healthStatus}`,
     `operables: ${result.operables.join(", ") || "ninguno"}`,
     `manualCandidates: ${result.manualCandidates.join(", ") || "ninguno"}`,
+    `shockEvents: ${shocks.join(" | ") || "ninguno"}`,
     `preCatalystExitGuard: ${result.preCatalystExitGuard.summary.tickersToFreeze.join(", ") || "ninguno"}`,
     `ranking top 5: ${top.join(" | ") || "ninguno"}`,
     `forwardSnapshot: ${result.forwardSnapshot.status} | ${result.forwardSnapshot.snapshotId}`,
@@ -164,6 +179,7 @@ async function runWalyDaily() {
     moduleOutputs: {
       dailyCockpit: dailyCockpit.paths,
       forwardSnapshot: forwardSnapshot.paths,
+      positionShockMonitor: pipeline.paths.positionShockMonitorPaths || null,
       preCatalystExitGuard: pipeline.paths.preCatalystExitGuardPaths || null,
       selector: selector.paths,
       walyPipeline: pipeline.paths
@@ -178,7 +194,8 @@ async function runWalyDaily() {
     preCatalystExitGuard: pipeline.preCatalystExitGuard,
     ranking: latestSnapshot.ranking || [],
     safeToOperate: false,
-    safeToReview: health.safeToReview === true
+    safeToReview: health.safeToReview === true,
+    shockEvents: pipeline.shockEvents || []
   };
   const summaryMarkdown = renderSummary(result);
 
