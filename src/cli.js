@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("path");
+const { runBiotechBinaryFailureLab } = require("./biotechBinaryFailureLab");
 const { runEdgeValidationEngine } = require("./edgeValidationEngine");
 const { generateBacktestReport } = require("./backtestEngine");
 const { runCatalystEngine } = require("./catalystEngine");
@@ -53,6 +54,7 @@ function printUsage() {
   node src/cli.js state
   node src/cli.js report
   node src/cli.js backtest [--dry-run]
+  node src/cli.js biotech-binary-failure-lab
   node src/cli.js historical-backtest <config-json>
   node src/cli.js historical-catalyst-dataset
   node src/cli.js historical-replay-engine
@@ -277,6 +279,11 @@ async function main() {
         console.log("Outcome backtest summary generado desde outcomes registrados; no es simulacion ex-ante.");
         console.log(`Output generado: ${result.outputPath}`);
         console.log(`Muestra resuelta: ${result.sampleSize}`);
+        break;
+      }
+      case "biotech-binary-failure-lab": {
+        const result = runBiotechBinaryFailureLab();
+        console.log(result.consoleReport);
         break;
       }
       case "historical-backtest": {
