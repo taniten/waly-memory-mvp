@@ -18,6 +18,7 @@
     "set-positions": "node src/cli.js set-positions",
     "set-watchlist": "node src/cli.js set-watchlist",
     "check": "node src/check.js",
-    "smoke": "node src/cli.js state"
+    "smoke": "node src/cli.js state",
+    "validate": "npm.cmd run check && npm.cmd run smoke && node src/cli.js guardrail-regression-tests && node src/cli.js waly-daily"
   }
 }
