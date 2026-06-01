@@ -7,6 +7,7 @@ const { runEdgeValidationEngine } = require("./edgeValidationEngine");
 const { generateBacktestReport } = require("./backtestEngine");
 const { runCatalystEngine } = require("./catalystEngine");
 const { runDailyCockpit } = require("./dailyCockpit");
+const { runDataHygieneAudit } = require("./dataHygieneAudit");
 const { runForwardSnapshotLog } = require("./forwardSnapshotLogger");
 const { runGuardrailRegressionTests } = require("./guardrailRegressionTests");
 const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktestEngine");
@@ -78,6 +79,7 @@ function printUsage() {
   node src/cli.js pre-catalyst-exit-guard
   node src/cli.js position-shock-monitor
   node src/cli.js daily-cockpit
+  node src/cli.js data-hygiene-audit
   node src/cli.js forward-snapshot-log
   node src/cli.js selector-engine
   node src/cli.js real-signal-log
@@ -441,6 +443,11 @@ async function main() {
       }
       case "daily-cockpit": {
         const result = await runDailyCockpit();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "data-hygiene-audit": {
+        const result = runDataHygieneAudit();
         console.log(result.consoleReport);
         break;
       }
