@@ -9,6 +9,7 @@ const { runCatalystEngine } = require("./catalystEngine");
 const { runDailyCockpit } = require("./dailyCockpit");
 const { runDataHygieneAudit } = require("./dataHygieneAudit");
 const { runDataHygieneApply } = require("./dataHygieneApply");
+const { runFailureAuditLifecycleGuard } = require("./failureAuditLifecycleGuard");
 const { runForwardSnapshotLog } = require("./forwardSnapshotLogger");
 const { runGuardrailRegressionTests } = require("./guardrailRegressionTests");
 const { runHistoricalBacktest, runPriceCoverage } = require("./historicalBacktestEngine");
@@ -82,6 +83,7 @@ function printUsage() {
   node src/cli.js daily-cockpit
   node src/cli.js data-hygiene-audit
   node src/cli.js data-hygiene-apply [--apply]
+  node src/cli.js failure-audit-lifecycle-guard
   node src/cli.js forward-snapshot-log
   node src/cli.js selector-engine
   node src/cli.js real-signal-log
@@ -467,6 +469,11 @@ async function main() {
       }
       case "data-hygiene-apply": {
         const result = runDataHygieneApply({ apply: args.includes("--apply") });
+        console.log(result.consoleReport);
+        break;
+      }
+      case "failure-audit-lifecycle-guard": {
+        const result = runFailureAuditLifecycleGuard();
         console.log(result.consoleReport);
         break;
       }
