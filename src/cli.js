@@ -18,6 +18,7 @@ const { runHistoricalReplayEngine } = require("./historicalReplayEngine");
 const { runHistoricalResearchLab } = require("./historicalResearchLab");
 const { initData } = require("./initData");
 const { runLiveUniverseScan } = require("./liveUniverseScanner");
+const { runLifecycleCompletionPlan } = require("./lifecycleCompletionPlan");
 const { runMultibaggerLab } = require("./multibaggerLab");
 const { runOpportunityRouter } = require("./opportunityRouter");
 const { runPostMortemEngine } = require("./postMortemEngine");
@@ -84,6 +85,7 @@ function printUsage() {
   node src/cli.js data-hygiene-audit
   node src/cli.js data-hygiene-apply [--apply]
   node src/cli.js failure-audit-lifecycle-guard
+  node src/cli.js lifecycle-completion-plan
   node src/cli.js forward-snapshot-log
   node src/cli.js selector-engine
   node src/cli.js real-signal-log
@@ -474,6 +476,11 @@ async function main() {
       }
       case "failure-audit-lifecycle-guard": {
         const result = runFailureAuditLifecycleGuard();
+        console.log(result.consoleReport);
+        break;
+      }
+      case "lifecycle-completion-plan": {
+        const result = runLifecycleCompletionPlan();
         console.log(result.consoleReport);
         break;
       }
