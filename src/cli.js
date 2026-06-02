@@ -20,6 +20,7 @@ const { initData } = require("./initData");
 const { runLiveUniverseScan } = require("./liveUniverseScanner");
 const { runLifecycleCompletionApply } = require("./lifecycleCompletionApply");
 const { runLifecycleCompletionPlan } = require("./lifecycleCompletionPlan");
+const { runLifecycleRemainingGapsAudit } = require("./lifecycleRemainingGapsAudit");
 const { runMultibaggerLab } = require("./multibaggerLab");
 const { runOpportunityRouter } = require("./opportunityRouter");
 const { runPostMortemEngine } = require("./postMortemEngine");
@@ -88,6 +89,7 @@ function printUsage() {
   node src/cli.js failure-audit-lifecycle-guard
   node src/cli.js lifecycle-completion-plan
   node src/cli.js lifecycle-completion-apply [--apply]
+  node src/cli.js lifecycle-remaining-gaps-audit
   node src/cli.js forward-snapshot-log
   node src/cli.js selector-engine
   node src/cli.js real-signal-log
@@ -488,6 +490,11 @@ async function main() {
       }
       case "lifecycle-completion-apply": {
         const result = runLifecycleCompletionApply({ apply: args.includes("--apply") });
+        console.log(result.consoleReport);
+        break;
+      }
+      case "lifecycle-remaining-gaps-audit": {
+        const result = runLifecycleRemainingGapsAudit();
         console.log(result.consoleReport);
         break;
       }
