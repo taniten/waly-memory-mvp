@@ -36,8 +36,26 @@ function renderPositions(positions) {
         `setup ${position.setupType || "n/d"}`,
         `playbook ${position.playbookType || "n/d"}`,
         `catalyst ${position.catalystType || "n/d"} ${position.catalystDate || ""}`.trim(),
-        `thesis: ${position.thesis}`
+        position.thesisStatus === "thesis_broken"
+          ? `thesisStatus ${position.thesisStatus}`
+          : `thesis: ${position.thesis}`
       ];
+
+      if (position.riskStatus) {
+        details.push(`riskStatus ${position.riskStatus}`);
+      }
+
+      if (position.reviewStatus) {
+        details.push(`reviewStatus ${position.reviewStatus}`);
+      }
+
+      if (position.suggestedAction) {
+        details.push(`suggestedAction ${position.suggestedAction}`);
+      }
+
+      if (position.thesisStatus === "thesis_broken") {
+        details.push("thesis vieja: stale");
+      }
 
       if (position.invalidation) {
         details.push(`invalidation: ${position.invalidation}`);

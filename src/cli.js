@@ -114,6 +114,18 @@ function renderState() {
     console.log("- Cartera vacia. WALY esta en modo 100% cash.");
   } else {
     summary.openPositions.forEach((position) => {
+      if (
+        position.thesisStatus === "thesis_broken" &&
+        position.riskStatus === "freeze" &&
+        position.reviewStatus === "revisar_manual" &&
+        position.suggestedAction === "exit_or_reduce_after_news_confirmed"
+      ) {
+        console.log(
+          `- ${position.ticker}: ${position.status} | thesisStatus: ${position.thesisStatus} | riskStatus: ${position.riskStatus} | reviewStatus: ${position.reviewStatus} | suggestedAction: ${position.suggestedAction} | thesis vieja: stale`
+        );
+        return;
+      }
+
       console.log(`- ${position.ticker}: ${position.status} | thesis: ${position.thesis}`);
     });
   }

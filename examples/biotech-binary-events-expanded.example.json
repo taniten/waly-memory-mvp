@@ -445,7 +445,10 @@
       "maxAdverseMoveIfShort": null,
       "sourcePrimary": "manual_verification_required",
       "sourceSecondary": "price_history_required",
-      "notes": "Manual load candidate; verify date and halt details."
+      "notes": "Manual load candidate; verify date and halt details.",
+      "classification": "needs_data",
+      "scoreStatus": "incomplete",
+      "useForShortEdge": false
     }
   ],
   "manualLoadQueue": [

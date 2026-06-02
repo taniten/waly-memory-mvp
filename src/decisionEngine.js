@@ -114,6 +114,18 @@ function buildFinalDecision(positions, ranking, crowdingWarnings) {
   return `${portfolioSentence} ${candidateSentence} ${disciplineSentence} ${crowdingSentence}`.trim();
 }
 
+function isAcknowledgedPositionWatchlistSplit(position, watchItem) {
+  return Boolean(
+    position &&
+      watchItem &&
+      position.status === "observar" &&
+      watchItem.status === "descartar" &&
+      watchItem.inPortfolio === true &&
+      watchItem.sourceOfTruth === "positions" &&
+      watchItem.noNewEntryFromWatchlist === true
+  );
+}
+
 function analyzeDecisionState(state, comparison) {
   const positions = state.positions.positions || [];
   const watchlist = state.watchlist.watchlist || [];
@@ -163,6 +175,20 @@ function analyzeDecisionState(state, comparison) {
     const ticker = normalizeTicker(item.ticker);
 
     if (positionsByTicker.has(ticker)) {
+      const position = positionsByTicker.get(ticker);
+
+      if (isAcknowledgedPositionWatchlistSplit(position, item)) {
+        flags.push(
+          createFlag(
+            "acknowledged_position_watchlist_split",
+            "info",
+            `${ticker} tiene split reconocido: posicion real en observar y watchlist descartada sin nueva entrada.`,
+            { source: "watchlist", ticker }
+          )
+        );
+        return;
+      }
+
       const duplicatedFlag = createFlag(
         "duplicatedTicker",
         "warning",
@@ -173,11 +199,11 @@ function analyzeDecisionState(state, comparison) {
       flags.push(duplicatedFlag);
       conflicts.push(duplicatedFlag);
 
-      if (positionsByTicker.get(ticker).status !== item.status) {
+      if (position.status !== item.status) {
         const statusFlag = createFlag(
           "conflictingStatus",
           "warning",
-          `${ticker} tiene status conflictivo entre posiciones (${positionsByTicker.get(ticker).status}) y watchlist (${item.status}).`,
+          `${ticker} tiene status conflictivo entre posiciones (${position.status}) y watchlist (${item.status}).`,
           { source: "watchlist", ticker }
         );
         flags.push(statusFlag);

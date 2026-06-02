@@ -154,6 +154,50 @@ function addIssue(issues, issue) {
   });
 }
 
+function pickChangedFields(row, expected) {
+  if (!row) {
+    return expected;
+  }
+
+  return Object.fromEntries(
+    Object.entries(expected).filter(([field, value]) => row[field] !== value)
+  );
+}
+
+function isOcsFailureAcknowledged(row) {
+  return Boolean(
+    row &&
+      row.thesisStatus === "thesis_broken" &&
+      row.catalystStatus === "occurred_failed" &&
+      row.oldFutureCatalystStatus === "stale" &&
+      row.noAdd === true &&
+      row.requireManualReview === true &&
+      row.suggestedAction === "exit_or_reduce_after_news_confirmed"
+  );
+}
+
+function isOcsCatalystStaleAcknowledged(row) {
+  return Boolean(
+    row &&
+      row.catalystStatus === "occurred_failed" &&
+      row.oldFutureCatalystStatus === "stale" &&
+      row.eventDate === "2026-05-29" &&
+      row.newsDate === "2026-05-29"
+  );
+}
+
+function isAcknowledgedPositionWatchlistSplit(position, watchItem) {
+  return Boolean(
+    position &&
+      watchItem &&
+      position.status === "observar" &&
+      watchItem.status === "descartar" &&
+      watchItem.inPortfolio === true &&
+      watchItem.sourceOfTruth === "positions" &&
+      watchItem.noNewEntryFromWatchlist === true
+  );
+}
+
 function buildInputs() {
   const settings = readJsonInput(INPUT_PATHS.settings);
   const positions = readJsonInput(INPUT_PATHS.positions);
@@ -191,8 +235,24 @@ function auditOcsThesis(inputs, proposedChanges, issues) {
   const shockFreeze = ocsShock && ocsShock.shockSeverity === "freeze_position" && ocsShock.suggestedAction === "freeze";
   const guardExit = ocsGuard && ["reduce_or_exit_suggested", "do_not_hold_through_event"].includes(ocsGuard.suggestedAction);
   const datasetFailure = ocsDataset && ocsDataset.classification === "post_failure_candidate";
+  const positionAcknowledged = isOcsFailureAcknowledged(ocsPosition);
+  const watchAcknowledged = isOcsFailureAcknowledged(ocsWatch);
 
-  if (hasOldDiamondThesis && shockFreeze && guardExit && datasetFailure) {
+  if (hasOldDiamondThesis && shockFreeze && guardExit && datasetFailure && positionAcknowledged) {
+    addIssue(issues.acknowledged, {
+      code: "OCS_THESIS_BROKEN_ACKNOWLEDGED",
+      evidence: {
+        catalystStatus: ocsPosition.catalystStatus,
+        oldFutureCatalystStatus: ocsPosition.oldFutureCatalystStatus,
+        riskStatus: ocsPosition.riskStatus,
+        suggestedAction: ocsPosition.suggestedAction,
+        thesisStatus: ocsPosition.thesisStatus
+      },
+      message: "OCS mantiene la tesis vieja como historial, pero la posicion ya esta marcada thesis_broken/freeze/manual-review.",
+      severity: "acknowledged",
+      ticker: "OCS"
+    });
+  } else if (hasOldDiamondThesis && shockFreeze && guardExit && datasetFailure) {
     addIssue(issues.critical, {
       code: "OCS_THESIS_BROKEN",
       evidence: {
@@ -209,41 +269,67 @@ function auditOcsThesis(inputs, proposedChanges, issues) {
   }
 
   const recommended = {
+    catalystStatus: "occurred_failed",
     noAdd: true,
+    oldFutureCatalystStatus: "stale",
     reason: "Phase 3 DIAMOND failed primary/key secondary; no FDA filing for DME currently planned.",
     requireManualReview: true,
     requireNewsCheck: true,
-    status: "freeze / revisar_manual",
+    reviewStatus: "revisar_manual",
+    riskStatus: "freeze",
     suggestedAction: "exit_or_reduce_after_news_confirmed",
     thesisStatus: "thesis_broken"
   };
+  const positionSet = pickChangedFields(ocsPosition, recommended);
 
   proposedChanges.byTicker.OCS = {
     ...(proposedChanges.byTicker.OCS || {}),
-    thesisBroken: recommended
+    ...(Object.keys(positionSet).length ? { thesisBroken: positionSet } : {})
   };
 
-  proposedChanges.byFile["data/positions.json"].push({
-    action: "propose_update_only",
-    key: "positions[ticker=OCS]",
-    reason: recommended.reason,
-    set: recommended
-  });
+  if (Object.keys(positionSet).length) {
+    proposedChanges.byFile["data/positions.json"].push({
+      action: "propose_update_only",
+      key: "positions[ticker=OCS]",
+      reason: recommended.reason,
+      set: positionSet
+    });
+  }
 
   if (ocsWatch) {
-    proposedChanges.byFile["data/watchlist.json"].push({
-      action: "propose_update_only",
-      key: "watchlist[ticker=OCS]",
-      reason: "Watchlist OCS debe dejar de generar entrada nueva tras la falla DIAMOND.",
-      set: {
-        catalystStatus: "occurred / failed",
-        inPortfolio: true,
-        noAdd: true,
-        sourceOfTruth: "positions",
-        status: "revisar_manual",
-        thesisStatus: "thesis_broken"
-      }
+    const watchSet = pickChangedFields(ocsWatch, {
+      catalystStatus: "occurred_failed",
+      inPortfolio: true,
+      noAdd: true,
+      noNewEntryFromWatchlist: true,
+      oldFutureCatalystStatus: "stale",
+      requireManualReview: true,
+      requireNewsCheck: true,
+      reviewStatus: "revisar_manual",
+      riskStatus: "freeze",
+      sourceOfTruth: "positions",
+      status: "descartar",
+      suggestedAction: "exit_or_reduce_after_news_confirmed",
+      thesisStatus: "thesis_broken"
     });
+
+    if (watchAcknowledged && Object.keys(watchSet).length === 0) {
+      addIssue(issues.acknowledged, {
+        code: "OCS_WATCHLIST_DISCARDED_ACKNOWLEDGED",
+        message: "OCS sigue visible en watchlist solo como referencia descartada y bloqueada para nueva entrada.",
+        severity: "acknowledged",
+        ticker: "OCS"
+      });
+    }
+
+    if (Object.keys(watchSet).length) {
+      proposedChanges.byFile["data/watchlist.json"].push({
+        action: "propose_update_only",
+        key: "watchlist[ticker=OCS]",
+        reason: "Watchlist OCS debe dejar de generar entrada nueva tras la falla DIAMOND.",
+        set: watchSet
+      });
+    }
   }
 
   return {
@@ -257,6 +343,7 @@ function auditOcsThesis(inputs, proposedChanges, issues) {
     ocsShock,
     ocsWatch,
     recommendation: recommended,
+    positionAcknowledged,
     shockFreeze
   };
 }
@@ -342,22 +429,41 @@ function auditOverdueReviews(inputs, currentDate, proposedChanges, issues) {
 }
 
 function auditPositionWatchlistDuplicates(inputs, proposedChanges, issues) {
-  const positionTickers = new Set(asArray(inputs.positions.value.positions).map((item) => normalizeTicker(item && item.ticker)));
-  const duplicates = asArray(inputs.watchlist.value.watchlist)
-    .map((item) => normalizeTicker(item && item.ticker))
-    .filter((ticker) => ticker && positionTickers.has(ticker))
-    .sort();
+  const positionsByTicker = new Map(
+    asArray(inputs.positions.value.positions)
+      .map((item) => [normalizeTicker(item && item.ticker), item])
+      .filter(([ticker]) => ticker)
+  );
+  const duplicateRows = asArray(inputs.watchlist.value.watchlist)
+    .map((item) => ({
+      position: positionsByTicker.get(normalizeTicker(item && item.ticker)),
+      ticker: normalizeTicker(item && item.ticker),
+      watchItem: item
+    }))
+    .filter((row) => row.ticker && row.position)
+    .sort((left, right) => left.ticker.localeCompare(right.ticker));
+  const acknowledged = duplicateRows.filter((row) => isAcknowledgedPositionWatchlistSplit(row.position, row.watchItem));
+  const duplicates = duplicateRows.filter((row) => !isAcknowledgedPositionWatchlistSplit(row.position, row.watchItem));
 
   if (duplicates.length) {
     addIssue(issues.minor, {
       code: "POSITION_WATCHLIST_DUPLICATE",
       message: "Tickers aparecen en positions y watchlist; no es fatal, pero positions debe mandar.",
       severity: "minor",
-      tickers: duplicates
+      tickers: duplicates.map((row) => row.ticker)
     });
   }
 
-  duplicates.forEach((ticker) => {
+  acknowledged.forEach((row) => {
+    addIssue(issues.acknowledged, {
+      code: "acknowledged_position_watchlist_split",
+      message: `${row.ticker} tiene positions.status=${row.position.status} y watchlist.status=${row.watchItem.status}; split reconocido porque positions es source of truth y no genera nueva entrada.`,
+      severity: "acknowledged",
+      ticker: row.ticker
+    });
+  });
+
+  duplicates.forEach((row) => {
     const proposal = {
       inPortfolio: true,
       newEntryAllowed: false,
@@ -366,18 +472,21 @@ function auditPositionWatchlistDuplicates(inputs, proposedChanges, issues) {
 
     proposedChanges.byFile["data/watchlist.json"].push({
       action: "propose_update_only",
-      key: `watchlist[ticker=${ticker}]`,
+      key: `watchlist[ticker=${row.ticker}]`,
       reason: "Ticker tambien esta en cartera abierta; la watchlist no debe generar nueva entrada.",
       set: proposal
     });
 
-    proposedChanges.byTicker[ticker] = {
-      ...(proposedChanges.byTicker[ticker] || {}),
+    proposedChanges.byTicker[row.ticker] = {
+      ...(proposedChanges.byTicker[row.ticker] || {}),
       duplicatePositionWatchlist: proposal
     };
   });
 
-  return duplicates;
+  return {
+    acknowledged: acknowledged.map((row) => row.ticker),
+    pending: duplicates.map((row) => row.ticker)
+  };
 }
 
 function auditCatalystMismatch(ocsContext, proposedChanges, issues) {
@@ -390,8 +499,25 @@ function auditCatalystMismatch(ocsContext, proposedChanges, issues) {
   const dates = [...new Set([positionDate, watchlistDate, fdaDate].filter(Boolean))];
   const sources = [...new Set([positionSource, watchlistSource, fdaSource].filter(Boolean))];
   const hasMismatch = dates.length > 1 || sources.length > 1;
+  const staleAcknowledged =
+    isOcsCatalystStaleAcknowledged(ocsContext.ocsPosition) &&
+    isOcsCatalystStaleAcknowledged(ocsContext.ocsWatch) &&
+    isOcsCatalystStaleAcknowledged(ocsContext.ocsFda);
 
-  if (hasMismatch) {
+  if (hasMismatch && staleAcknowledged) {
+    addIssue(issues.acknowledged, {
+      code: "OCS_CATALYST_MISMATCH_STALE_ACKNOWLEDGED",
+      evidence: {
+        dates,
+        eventDate: "2026-05-29",
+        oldFutureCatalystStatus: "stale",
+        sources
+      },
+      message: "OCS mantiene fechas historicas divergentes, pero el catalyst futuro ya esta marcado stale/occurred_failed.",
+      severity: "acknowledged",
+      ticker: "OCS"
+    });
+  } else if (hasMismatch) {
     addIssue(issues.critical, {
       code: "OCS_CATALYST_MISMATCH",
       evidence: {
@@ -405,30 +531,43 @@ function auditCatalystMismatch(ocsContext, proposedChanges, issues) {
   }
 
   const proposal = {
-    catalystStatus: "occurred / failed",
+    catalystStatus: "occurred_failed",
     eventDate: "2026-05-29",
     newsDate: "2026-05-29",
     oldFutureCatalystStatus: "stale",
     reason: "DIAMOND result ya ocurrio; no mantener fecha futura como catalyst operable."
   };
 
-  ["data/positions.json", "data/watchlist.json", "data/fda.json"].forEach((filePath) => {
+  [
+    ["data/positions.json", ocsContext.ocsPosition],
+    ["data/watchlist.json", ocsContext.ocsWatch],
+    ["data/fda.json", ocsContext.ocsFda]
+  ].forEach(([filePath, row]) => {
+    const set = pickChangedFields(row, proposal);
+
+    if (Object.keys(set).length === 0) {
+      return;
+    }
+
     proposedChanges.byFile[filePath].push({
       action: "propose_update_only",
       key: `${filePath.includes("fda") ? "catalysts" : filePath.includes("positions") ? "positions" : "watchlist"}[ticker=OCS]`,
       reason: proposal.reason,
-      set: proposal
+      set
     });
   });
 
-  proposedChanges.byTicker.OCS = {
-    ...(proposedChanges.byTicker.OCS || {}),
-    catalystMismatch: proposal
-  };
+  if (!staleAcknowledged) {
+    proposedChanges.byTicker.OCS = {
+      ...(proposedChanges.byTicker.OCS || {}),
+      catalystMismatch: proposal
+    };
+  }
 
   return {
     dates,
     hasMismatch,
+    staleAcknowledged,
     sources
   };
 }
@@ -436,8 +575,21 @@ function auditCatalystMismatch(ocsContext, proposedChanges, issues) {
 function auditVktxCatalystType(inputs, proposedChanges, issues) {
   const vktxPosition = findByTicker(asArray(inputs.positions.value.positions), "VKTX");
   const missingCatalystType = vktxPosition && !vktxPosition.catalystType;
+  const researchAcknowledged = Boolean(
+    missingCatalystType &&
+      vktxPosition.catalystStatus === "research" &&
+      vktxPosition.noAPlusUntilCatalystVerified === true &&
+      vktxPosition.catalystTypeNote === "unknown_or_event_swing"
+  );
 
-  if (missingCatalystType) {
+  if (researchAcknowledged) {
+    addIssue(issues.acknowledged, {
+      code: "VKTX_CATALYST_TYPE_RESEARCH_ACKNOWLEDGED",
+      message: "VKTX no tiene catalystType formal, pero esta marcado research y bloqueado para A+ hasta catalyst verificable.",
+      severity: "acknowledged",
+      ticker: "VKTX"
+    });
+  } else if (missingCatalystType) {
     addIssue(issues.minor, {
       code: "VKTX_MISSING_CATALYST_TYPE",
       message: "VKTX no tiene catalystType en positions; no inventar catalyst duro.",
@@ -448,40 +600,58 @@ function auditVktxCatalystType(inputs, proposedChanges, issues) {
 
   const proposal = {
     catalystStatus: "research",
-    catalystType: "unknown_or_event_swing",
-    noAPlusUntil: "verified_catalyst",
-    reason: "No clasificar como A+ hasta catalyst verificable."
+    catalystTypeNote: "unknown_or_event_swing",
+    noAPlusUntilCatalystVerified: true
   };
+  const set = pickChangedFields(vktxPosition, proposal);
 
-  proposedChanges.byFile["data/positions.json"].push({
-    action: "propose_update_only",
-    key: "positions[ticker=VKTX]",
-    reason: "VKTX no debe heredar catalyst fda si el setup actual es event-swing de atencion.",
-    set: proposal
-  });
+  if (Object.keys(set).length) {
+    proposedChanges.byFile["data/positions.json"].push({
+      action: "propose_update_only",
+      key: "positions[ticker=VKTX]",
+      reason: "VKTX no debe heredar catalyst fda si el setup actual es event-swing de atencion.",
+      set
+    });
 
-  proposedChanges.byTicker.VKTX = {
-    ...(proposedChanges.byTicker.VKTX || {}),
-    catalystType: proposal
-  };
+    proposedChanges.byTicker.VKTX = {
+      ...(proposedChanges.byTicker.VKTX || {}),
+      catalystType: set
+    };
+  }
 
   return {
     missingCatalystType,
     proposal,
+    researchAcknowledged,
     vktxPosition
   };
 }
 
 function auditPlrxDataset(inputs, proposedChanges, issues) {
+  const sourceEvents = asArray(inputs.biotechExpandedExample.value && inputs.biotechExpandedExample.value.events);
+  const examplePlrx = findByTicker(sourceEvents, "PLRX");
+  const exampleAcknowledged = Boolean(
+    examplePlrx &&
+      examplePlrx.classification === "needs_data" &&
+      examplePlrx.scoreStatus === "incomplete" &&
+      examplePlrx.useForShortEdge === false
+  );
   const events = asArray(inputs.biotechDatasetExpansionLatest.value && inputs.biotechDatasetExpansionLatest.value.events);
   const scores = asArray(inputs.biotechDatasetExpansionLatest.value && inputs.biotechDatasetExpansionLatest.value.scores);
   const plrxEvent = findByTicker(events, "PLRX");
   const plrxScore = findByTicker(scores, "PLRX");
   const score = plrxEvent ? plrxEvent.binaryFragilityScore : (plrxScore && plrxScore.binaryFragilityScore);
   const classification = plrxEvent ? plrxEvent.classification : (plrxScore && plrxScore.classification);
-  const inconsistent = score === 0 && classification === "post_failure_candidate";
+  const inconsistent = score === 0 && classification === "post_failure_candidate" && !exampleAcknowledged;
 
-  if (inconsistent) {
+  if (exampleAcknowledged) {
+    addIssue(issues.acknowledged, {
+      code: "PLRX_NEEDS_DATA_ACKNOWLEDGED",
+      message: "PLRX source example ya esta marcado needs_data/incomplete y fuera de short edge.",
+      severity: "acknowledged",
+      ticker: "PLRX"
+    });
+  } else if (inconsistent) {
     addIssue(issues.minor, {
       code: "PLRX_SCORE_CLASSIFICATION_INCONSISTENCY",
       evidence: {
@@ -497,24 +667,27 @@ function auditPlrxDataset(inputs, proposedChanges, issues) {
 
   const proposal = {
     classification: "needs_data",
-    edgeEligible: false,
-    reason: "Datos criticos faltantes; no usarlo para edge hasta corregir.",
-    scoreStatus: "incomplete"
+    scoreStatus: "incomplete",
+    useForShortEdge: false
   };
+  const set = pickChangedFields(examplePlrx, proposal);
 
-  proposedChanges.byFile["examples/biotech-binary-events-expanded.example.json"].push({
-    action: "propose_update_only",
-    key: "events[ticker=PLRX]",
-    reason: proposal.reason,
-    set: proposal
-  });
+  if (Object.keys(set).length) {
+    proposedChanges.byFile["examples/biotech-binary-events-expanded.example.json"].push({
+      action: "propose_update_only",
+      key: "events[ticker=PLRX]",
+      reason: "Datos criticos faltantes; no usarlo para edge hasta corregir.",
+      set
+    });
 
-  proposedChanges.byTicker.PLRX = {
-    ...(proposedChanges.byTicker.PLRX || {}),
-    datasetConsistency: proposal
-  };
+    proposedChanges.byTicker.PLRX = {
+      ...(proposedChanges.byTicker.PLRX || {}),
+      datasetConsistency: set
+    };
+  }
 
   return {
+    exampleAcknowledged,
     inconsistent,
     plrxEvent,
     proposal
@@ -622,19 +795,22 @@ function renderSummary(payload) {
   lines.push("## 2. Inconsistencias menores");
   lines.push(renderIssueList(payload.issues.minor));
   lines.push("");
-  lines.push("## 3. Cambios propuestos por archivo");
+  lines.push("## 3. Reconocido / stale");
+  lines.push(renderIssueList(payload.issues.acknowledged || []));
+  lines.push("");
+  lines.push("## 4. Cambios propuestos por archivo");
   lines.push(renderChangesByFile(payload.proposedChanges));
   lines.push("");
-  lines.push("## 4. Cambios propuestos por ticker");
+  lines.push("## 5. Cambios propuestos por ticker");
   lines.push(renderChangesByTicker(payload.proposedChanges));
   lines.push("");
-  lines.push("## 5. Requiere confirmacion humana");
+  lines.push("## 6. Requiere confirmacion humana");
   lines.push(renderHumanConfirmations(payload));
   lines.push("");
-  lines.push("## 6. Que NO se toco");
+  lines.push("## 7. Que NO se toco");
   payload.proposedChanges.untouched.forEach((item) => lines.push(`- ${item}`));
   lines.push("");
-  lines.push("## 7. Confirmacion no operacion / no IBKR / no Binance / no data real modificada");
+  lines.push("## 8. Confirmacion no operacion / no IBKR / no Binance / no data real modificada");
   payload.confirmations.forEach((item) => lines.push(`- ${item}`));
 
   return `${lines.join("\n")}\n`;
@@ -643,12 +819,14 @@ function renderSummary(payload) {
 function renderConsoleReport(payload) {
   const critical = payload.issues.critical.map((issue) => issue.ticker ? `${issue.ticker}:${issue.code}` : issue.code);
   const minor = payload.issues.minor.map((issue) => issue.ticker ? `${issue.ticker}:${issue.code}` : issue.code);
+  const acknowledged = (payload.issues.acknowledged || []).map((issue) => issue.ticker ? `${issue.ticker}:${issue.code}` : issue.code);
   const paths = payload.paths;
 
   return [
     "WALY Data Hygiene Audit v1 generado.",
     `Critical inconsistencies: ${payload.issues.critical.length} | ${critical.join(" | ") || "ninguna"}`,
     `Minor inconsistencies: ${payload.issues.minor.length} | ${minor.join(" | ") || "ninguna"}`,
+    `Acknowledged/stale: ${(payload.issues.acknowledged || []).length} | ${acknowledged.join(" | ") || "ninguna"}`,
     `OCS proposal: ${payload.proposedChanges.byTicker.OCS && payload.proposedChanges.byTicker.OCS.thesisBroken ? payload.proposedChanges.byTicker.OCS.thesisBroken.suggestedAction : "n/d"}`,
     `VKTX proposal: ${payload.proposedChanges.byTicker.VKTX && payload.proposedChanges.byTicker.VKTX.catalystType ? payload.proposedChanges.byTicker.VKTX.catalystType.catalystType : "n/d"}`,
     `VRDN proposal: ${payload.proposedChanges.byTicker.VRDN && payload.proposedChanges.byTicker.VRDN.nextReviewAt ? payload.proposedChanges.byTicker.VRDN.nextReviewAt.suggestedCadence : "n/d"}`,
@@ -666,6 +844,7 @@ function buildAuditPayload() {
   const currentDate = getCurrentDateInTimezone(inputs.settings.value.timezone);
   const proposedChanges = buildProposedChanges();
   const issues = {
+    acknowledged: [],
     critical: [],
     minor: []
   };

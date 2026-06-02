@@ -108,6 +108,16 @@ function meetsBCriteria(item) {
 }
 
 function deriveSetupRank(item, breakdown) {
+  if (
+    item.status === "descartar" ||
+    item.setupRank === "descartar" ||
+    item.thesisStatus === "thesis_broken" ||
+    item.catalystStatus === "occurred_failed" ||
+    item.oldFutureCatalystStatus === "stale"
+  ) {
+    return VALID_SETUP_RANKS[3];
+  }
+
   if (item.etfProfile && item.etfProfile.requiresManualReview) {
     return VALID_SETUP_RANKS[3];
   }

@@ -1171,6 +1171,18 @@ function validateSettings(settings) {
   return result;
 }
 
+function isAcknowledgedPositionWatchlistSplit(position, watchItem) {
+  return Boolean(
+    position &&
+      watchItem &&
+      position.status === "observar" &&
+      watchItem.status === "descartar" &&
+      watchItem.inPortfolio === true &&
+      watchItem.sourceOfTruth === "positions" &&
+      watchItem.noNewEntryFromWatchlist === true
+  );
+}
+
 function validateStateConsistency(state) {
   const result = createValidationResult();
   const positions = (state.positions && state.positions.positions) || [];
@@ -1211,6 +1223,18 @@ function validateStateConsistency(state) {
 
     if (positionsByTicker.has(ticker)) {
       const existing = positionsByTicker.get(ticker);
+      const acknowledgedSplit = isAcknowledgedPositionWatchlistSplit(existing.position, item);
+
+      if (acknowledgedSplit) {
+        pushWarning(
+          result,
+          "acknowledged_position_watchlist_split",
+          `${ticker} tiene split reconocido: posicion real en observar y watchlist descartada sin nueva entrada.`,
+          `watchlist[${index}]`,
+          { source: "watchlist", ticker }
+        );
+        return;
+      }
 
       pushWarning(
         result,

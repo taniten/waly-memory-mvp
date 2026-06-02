@@ -320,11 +320,23 @@ function getMissingManualFields(item, ingestedRecord) {
   return missingFields;
 }
 
+function isStaleFailedCatalyst(item) {
+  return Boolean(
+    item &&
+      item.catalystStatus === "occurred_failed" &&
+      item.oldFutureCatalystStatus === "stale"
+  );
+}
+
 function getCatalystMismatches(item, ingestedRecord) {
   const mismatches = [];
   const manualDate = pickManualCatalystDate(item);
 
   if (!ingestedRecord) {
+    return mismatches;
+  }
+
+  if (isStaleFailedCatalyst(item)) {
     return mismatches;
   }
 
@@ -561,6 +573,7 @@ function toEventRecord(item, sourceKind, currentDate) {
     catalyst: item.catalyst || item.rationale || "",
     catalystDate: hasValidCatalystDate ? catalystDate : null,
     catalystLabel: CATALYST_LABELS[item.catalystType] || "catalyst",
+    catalystStatus: item.catalystStatus || null,
     catalystText: item.catalyst || item.rationale || "",
     catalystTiming: getCatalystTiming(daysToCatalyst),
     catalystTimingLabel: formatCatalystTiming(daysToCatalyst),
@@ -571,6 +584,7 @@ function toEventRecord(item, sourceKind, currentDate) {
     lastPrice: isFiniteNumber(item.lastPrice) ? item.lastPrice : null,
     market: item.market || null,
     notes: item.notes || "",
+    oldFutureCatalystStatus: item.oldFutureCatalystStatus || null,
     priority,
     quantity: isFiniteNumber(item.quantity) ? item.quantity : null,
     rationale: item.rationale || "",
@@ -578,8 +592,10 @@ function toEventRecord(item, sourceKind, currentDate) {
     sourceKind,
     sourcePriority: SOURCE_PRIORITY[sourceKind] || 99,
     status: item.status,
+    suggestedAction: item.suggestedAction || null,
     etfProfile,
     thesis: item.thesis,
+    thesisStatus: item.thesisStatus || null,
     ticker
   };
 }
@@ -784,6 +800,7 @@ function analyzeEventState(state) {
 
   const activeCatalysts = universe
     .filter((item) => item.status !== "descartar")
+    .filter((item) => !isStaleFailedCatalyst(item))
     .filter(
       (item) =>
         item.daysToCatalyst !== null &&
@@ -792,14 +809,18 @@ function analyzeEventState(state) {
     )
     .sort(compareEventRecords);
 
-  const flags = universe.flatMap((item) => createCoverageFlags(item));
-  const trackedItems = universe.filter((item) => item.status !== "descartar");
+  const flags = universe.filter((item) => !isStaleFailedCatalyst(item)).flatMap((item) => createCoverageFlags(item));
+  const trackedItems = universe.filter((item) => item.status !== "descartar" && !isStaleFailedCatalyst(item));
   const itemsWithCatalystDate = trackedItems.filter((item) => isNonEmptyString(item.catalystDate));
   const mismatches = [];
   const missingTrackedCatalysts = [];
   const confirmedCatalysts = [];
 
   universe.forEach((item) => {
+    if (isStaleFailedCatalyst(item)) {
+      return;
+    }
+
     const ingestedMatch = item.ingestion.ingestedMatch;
 
     if (!ingestedMatch) {
