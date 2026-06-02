@@ -52,14 +52,35 @@ function renderRanking(ranking) {
   ).join("\n");
 }
 
-function renderPortfolio(portfolio) {
+function lifecycleRowsByTicker(lifecycleGuard) {
+  return new Map(
+    ((lifecycleGuard && lifecycleGuard.lifecycle && lifecycleGuard.lifecycle.positions) || [])
+      .map((row) => [row.ticker, row])
+  );
+}
+
+function renderPortfolio(portfolio, lifecycleGuard) {
   if (!Array.isArray(portfolio) || portfolio.length === 0) {
     return "- Cartera vacia.";
   }
 
-  return portfolio.map((row) =>
-    `- ${row.ticker}: qty ${row.quantity} | avg ${row.avgPrice} | last ${row.lastPrice} | accion ${row.action}`
-  ).join("\n");
+  const lifecycleByTicker = lifecycleRowsByTicker(lifecycleGuard);
+
+  return portfolio.map((row) => {
+    const lifecycle = lifecycleByTicker.get(row.ticker);
+    const thesisBroken = lifecycle && lifecycle.existingRiskFlags && lifecycle.existingRiskFlags.thesisStatus === "thesis_broken";
+    const freeze = lifecycle && lifecycle.existingRiskFlags && lifecycle.existingRiskFlags.riskStatus === "freeze";
+
+    if (lifecycle && lifecycle.lifecycleStatus === "incomplete") {
+      const action = thesisBroken || freeze
+        ? "exit_or_reduce_after_news_confirmed"
+        : "complete_lifecycle_before_any_add";
+
+      return `- ${row.ticker}: qty ${row.quantity} | avg ${row.avgPrice} | last ${row.lastPrice} | lifecycle ${lifecycle.lifecycleStatus} | accion ${action} | noAdd=true | requireManualReview=true`;
+    }
+
+    return `- ${row.ticker}: qty ${row.quantity} | avg ${row.avgPrice} | last ${row.lastPrice} | accion ${row.action}`;
+  }).join("\n");
 }
 
 function renderShockEvents(shockEvents) {
@@ -70,6 +91,25 @@ function renderShockEvents(shockEvents) {
   return shockEvents.map((row) =>
     `- ${row.ticker}: ${row.shockSeverity} | day ${row.dayChangePct}% | relVol ${row.relVol === null ? "n/d" : row.relVol} | accion ${row.suggestedAction} | noAdd=${row.noAdd ? "true" : "false"}`
   ).join("\n");
+}
+
+function renderLifecycleGuard(lifecycleGuard) {
+  const rows = lifecycleGuard && lifecycleGuard.lifecycle && Array.isArray(lifecycleGuard.lifecycle.positions)
+    ? lifecycleGuard.lifecycle.positions.filter((row) => row.lifecycleStatus === "incomplete")
+    : [];
+
+  if (!rows.length) {
+    return "- Sin posiciones activas con lifecycle incompleto.";
+  }
+
+  return rows.map((row) => {
+    const thesisBroken = row.existingRiskFlags && row.existingRiskFlags.thesisStatus === "thesis_broken";
+    const freeze = row.existingRiskFlags && row.existingRiskFlags.riskStatus === "freeze";
+    const prefix = thesisBroken || freeze ? `${row.ticker}: thesis_broken/freeze` : `${row.ticker}: ${row.lifecycleStatus}`;
+    const action = thesisBroken || freeze ? " | exit_or_reduce_after_news_confirmed" : "";
+
+    return `- ${prefix} | faltan [${row.missingLifecycleFields.join(", ")}]${action}`;
+  }).join("\n");
 }
 
 function renderSummary(result) {
@@ -94,7 +134,7 @@ function renderSummary(result) {
   lines.push(renderRanking(result.ranking));
   lines.push("");
   lines.push("## Cartera actual");
-  lines.push(renderPortfolio(result.portfolio));
+  lines.push(renderPortfolio(result.portfolio, result.lifecycleGuard));
   lines.push("");
   lines.push("## Shock Events");
   lines.push(renderShockEvents(result.shockEvents));
@@ -107,6 +147,9 @@ function renderSummary(result) {
       lines.push(`- ${row.ticker}: ${row.suggestedAction} | ${row.binaryType} | ${row.window} | days ${row.daysToCatalyst === null ? "n/d" : row.daysToCatalyst}`);
     });
   }
+  lines.push("");
+  lines.push("## Lifecycle Guard");
+  lines.push(renderLifecycleGuard(result.lifecycleGuard));
   lines.push("");
   lines.push("## Forward snapshot");
   lines.push(`- snapshotId: ${result.forwardSnapshot.snapshotId}`);
@@ -124,6 +167,7 @@ function renderConsoleReport(result) {
     `${row.ticker}:${formatNumber(row.selectorScore)}:${row.classification || "n/d"}`
   );
   const shocks = (result.shockEvents || []).map((row) => `${row.ticker}:${row.shockSeverity}:${row.suggestedAction}`);
+  const lifecycleIncomplete = result.lifecycleIncompletePositions || [];
 
   return [
     "WALY Daily Run generado.",
@@ -132,6 +176,8 @@ function renderConsoleReport(result) {
     `healthStatus: ${result.healthStatus}`,
     `operables: ${result.operables.join(", ") || "ninguno"}`,
     `manualCandidates: ${result.manualCandidates.join(", ") || "ninguno"}`,
+    `riskReview: ${(result.riskReview || []).join(", ") || "ninguno"}`,
+    `lifecycleIncompletePositions: ${lifecycleIncomplete.map((row) => row.ticker || row).join(", ") || "ninguna"}`,
     `shockEvents: ${shocks.join(" | ") || "ninguno"}`,
     `preCatalystExitGuard: ${result.preCatalystExitGuard.summary.tickersToFreeze.join(", ") || "ninguno"}`,
     `ranking top 5: ${top.join(" | ") || "ninguno"}`,
@@ -175,6 +221,7 @@ async function runWalyDaily() {
     },
     healthStatus: health.healthStatus || pipeline.healthStatus || "missingData",
     manualCandidates: decision.manualCandidates || [],
+    riskReview: decision.riskReview || [],
     mode,
     moduleOutputs: {
       dailyCockpit: dailyCockpit.paths,
@@ -191,6 +238,9 @@ async function runWalyDaily() {
       summaryPath: SUMMARY_PATH
     },
     portfolio: pipeline.portfolio || [],
+    lifecycleGuard: pipeline.lifecycleGuard || null,
+    lifecycleIncompletePositions: pipeline.lifecycleIncompletePositions || [],
+    lifecycleRequiredRules: pipeline.lifecycleRequiredRules || [],
     preCatalystExitGuard: pipeline.preCatalystExitGuard,
     ranking: latestSnapshot.ranking || [],
     safeToOperate: false,

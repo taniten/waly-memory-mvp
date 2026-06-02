@@ -29,6 +29,7 @@ const {
   isFreezeOrWorse,
   writePositionShockOutputs
 } = require("./positionShockMonitor");
+const { buildPayload: buildLifecycleGuardPayload } = require("./failureAuditLifecycleGuard");
 const { buildSizingPayload } = require("./sizingEngine");
 const { buildTimingPayload } = require("./timingEngine");
 const { buildTrainTestPayload } = require("./trainTestEngine");
@@ -229,6 +230,7 @@ function dataFreshness(inputs) {
 function buildHealth({
   conflicts,
   inputs,
+  lifecycleGuard,
   missingData,
   positionShockMonitor,
   preCatalystExitGuard,
@@ -244,6 +246,7 @@ function buildHealth({
     "postMortemEngine",
     "preCatalystExitGuard",
     "positionShockMonitor",
+    lifecycleGuard ? "failureAuditLifecycleGuard" : null,
     "walyPipeline",
     inputs.dailyCockpit ? "daily-cockpit" : null,
     inputs.selectorEngine ? "selector-engine" : null,
@@ -255,9 +258,12 @@ function buildHealth({
     !inputs.socialRadar ? "social-radar latest" : null,
     !inputs.parameterSweep ? "historical parameter-sweep" : null,
     !inputs.signalTypeAnalysis ? "historical signal-type-analysis" : null,
-    !inputs.v32Results ? "v3-2 signal-quality results" : null
+    !inputs.v32Results ? "v3-2 signal-quality results" : null,
+    !lifecycleGuard ? "failure-audit-lifecycle-guard" : null
   ].filter(Boolean);
   const reasons = [];
+  const lifecycleIncompleteCount =
+    lifecycleGuard && lifecycleGuard.lifecycle ? lifecycleGuard.lifecycle.incompleteCount || 0 : 0;
 
   if (prohibitedActionHits.length > 0) {
     reasons.push("accion prohibida detectada");
@@ -287,6 +293,10 @@ function buildHealth({
     reasons.push("position shock monitor activo");
   }
 
+  if (lifecycleIncompleteCount > 0) {
+    reasons.push("lifecycle guard incompleto");
+  }
+
   let healthStatus = "green";
   if (prohibitedActionHits.length > 0 || modulesLoaded.length < 7) {
     healthStatus = "red";
@@ -295,6 +305,7 @@ function buildHealth({
     modulesMissing.length > 0 ||
     missingData.length > 0 ||
     redFlags.length > 0 ||
+    lifecycleIncompleteCount > 0 ||
     (preCatalystExitGuard && preCatalystExitGuard.summary && preCatalystExitGuard.summary.tickersToFreeze.length > 0) ||
     (positionShockMonitor && positionShockMonitor.summary && positionShockMonitor.summary.freezeOrWorse > 0)
   ) {
@@ -304,6 +315,16 @@ function buildHealth({
   return {
     dataFreshness: dataFreshness(inputs),
     healthStatus,
+    lifecycleBlockers: lifecycleGuard && lifecycleGuard.lifecycle
+      ? lifecycleGuard.lifecycle.positions.filter((row) => row.lifecycleStatus === "incomplete")
+      : [],
+    lifecycleGuard: {
+      active: Boolean(lifecycleGuard),
+      incompleteCount: lifecycleIncompleteCount
+    },
+    lifecycleIncompletePositions: lifecycleGuard && lifecycleGuard.lifecycle
+      ? lifecycleGuard.lifecycle.positions.filter((row) => row.lifecycleStatus === "incomplete").map((row) => row.ticker)
+      : [],
     modulesLoaded,
     modulesMissing,
     reasons: reasons.length ? reasons : ["pipeline consistente para revision"],
@@ -334,9 +355,29 @@ function combinedGuardFlags(exitGuardRow, shockRow) {
   return flags;
 }
 
+function lifecycleRowsByTicker(lifecycleGuard) {
+  return new Map(
+    ((lifecycleGuard && lifecycleGuard.lifecycle && lifecycleGuard.lifecycle.positions) || [])
+      .map((row) => [row.ticker, row])
+  );
+}
+
+function isLifecycleIncomplete(row) {
+  return Boolean(row && row.lifecycleStatus === "incomplete");
+}
+
+function isLifecycleThesisBroken(row) {
+  return Boolean(
+    row &&
+      row.existingRiskFlags &&
+      row.existingRiskFlags.thesisStatus === "thesis_broken"
+  );
+}
+
 function applyGuardrails({
   catalyst,
   inputs,
+  lifecycleGuard,
   positionShockMonitor,
   preCatalystExitGuard,
   selectorRanking,
@@ -352,6 +393,7 @@ function applyGuardrails({
   const shockByTicker = new Map(
     ((positionShockMonitor && positionShockMonitor.rows) || []).map((row) => [row.ticker, row])
   );
+  const lifecycleByTicker = lifecycleRowsByTicker(lifecycleGuard);
   const conflicts = [];
   const correctedFalsePositives = [];
   const manualCandidateBlocklist = new Set();
@@ -371,7 +413,33 @@ function applyGuardrails({
     const socialScore = row.components && row.components.socialScore;
     const exitGuardRow = exitGuardByTicker.get(row.ticker);
     const shockRow = shockByTicker.get(row.ticker);
+    const lifecycleRow = lifecycleByTicker.get(row.ticker);
     const strongShock = shockRow && isFreezeOrWorse(shockRow);
+    const lifecycleIncomplete = isLifecycleIncomplete(lifecycleRow);
+    const lifecycleThesisBroken = isLifecycleThesisBroken(lifecycleRow);
+
+    if (lifecycleIncomplete) {
+      next.lifecycleGuard = lifecycleRow;
+      next.noAdd = true;
+      next.requireManualReview = true;
+      next.safeToOperate = false;
+      next.pipelineAction = lifecycleThesisBroken ? "revisar_manual" : "revisar_manual";
+      next.pipelineClassification = lifecycleThesisBroken ? "discard" : lowerClassification(next.pipelineClassification);
+      next.pipelineRedFlags.push("lifecycle incomplete");
+      next.guardFlags.push("lifecycleGuard");
+      redFlags.push(`${row.ticker}: lifecycle incomplete`);
+      conflicts.push(`${row.ticker}: posicion activa con lifecycle incompleto`);
+      correctedFalsePositives.push(`${row.ticker}: bloqueado por lifecycle incomplete`);
+    }
+
+    if (lifecycleThesisBroken) {
+      next.pipelineAction = "revisar_manual";
+      next.pipelineClassification = "discard";
+      next.pipelineRedFlags.push("thesis_broken/freeze lifecycle guard");
+      next.guardFlags.push("thesisIntegrityEngine");
+      redFlags.push(`${row.ticker}: thesis_broken/freeze requiere review manual o reduce_risk`);
+      conflicts.push(`${row.ticker}: thesis_broken no puede tener clasificacion positiva`);
+    }
 
     if (exitGuardRow && EXIT_ACTIONS.has(exitGuardRow.suggestedAction)) {
       next.pipelineAction = "reducir_riesgo_sugerido";
@@ -410,7 +478,7 @@ function applyGuardrails({
       correctedFalsePositives.push(`${row.ticker}: A/A+ bloqueado hasta timing confirmado`);
     }
 
-    if (row.classification === "discard" && ["candidato_manual", "revisar_manual"].includes(row.actionSuggested)) {
+    if (!lifecycleIncomplete && row.classification === "discard" && ["candidato_manual", "revisar_manual"].includes(row.actionSuggested)) {
       next.pipelineAction = "descartar";
       next.pipelineClassification = "discard";
       next.pipelineRedFlags.push("discard aparecia como candidato");
@@ -435,6 +503,12 @@ function applyGuardrails({
       conflicts.push(`${row.ticker}: social alto sin catalyst verificable`);
     }
 
+    if (lifecycleIncomplete && !lifecycleThesisBroken) {
+      next.pipelineAction = "revisar_manual";
+      next.pipelineClassification = "C research";
+      manualCandidateBlocklist.delete(row.ticker);
+    }
+
     next.guardFlags = [...new Set(next.guardFlags)];
     next.pipelineRedFlags = [...new Set(next.pipelineRedFlags)];
     return next;
@@ -446,12 +520,37 @@ function applyGuardrails({
     const timingRow = timingByTicker.get(row.ticker);
     const exitGuardRow = exitGuardByTicker.get(row.ticker);
     const shockRow = shockByTicker.get(row.ticker);
+    const lifecycleRow = lifecycleByTicker.get(row.ticker);
     const strongShock = shockRow && isFreezeOrWorse(shockRow);
+    const lifecycleIncomplete = isLifecycleIncomplete(lifecycleRow);
+    const lifecycleThesisBroken = isLifecycleThesisBroken(lifecycleRow);
     const next = {
       ...row,
       guardFlags: [...(row.guardFlags || [])],
       redFlags: [...(row.redFlags || [])]
     };
+
+    if (lifecycleIncomplete) {
+      next.lifecycleGuard = lifecycleRow;
+      next.maxNewPositionPct = 0;
+      next.noAdd = true;
+      next.requireManualReview = true;
+      next.safeToOperate = false;
+      next.sizingAction = lifecycleThesisBroken ? "reduce_risk" : "no_add";
+      next.suggestedShares = 0;
+      next.suggestedSizeUSD = 0;
+      next.redFlags.push("lifecycle incomplete");
+      next.guardFlags.push("lifecycleGuard");
+      correctedFalsePositives.push(`${row.ticker}: sizing forzado a $0 por lifecycle incomplete`);
+    }
+
+    if (lifecycleThesisBroken) {
+      next.sizingAction = "reduce_risk";
+      next.suggestedShares = 0;
+      next.suggestedSizeUSD = 0;
+      next.redFlags.push("thesis_broken/freeze lifecycle guard");
+      next.guardFlags.push("thesisIntegrityEngine");
+    }
 
     if (exitGuardRow && EXIT_ACTIONS.has(exitGuardRow.suggestedAction)) {
       next.maxNewPositionPct = 0;
@@ -553,6 +652,7 @@ function determineDecision({ guardrails, inputs, selectorRanking, sizingRows, ti
     timingByTicker.get(row.ticker).status === "trigger_confirmed"
   );
   const manualCandidates = new Set();
+  const riskReview = new Set();
   const blocklist = guardrails ? guardrails.manualCandidateBlocklist : new Set();
 
   ((inputs.dailyCockpit && inputs.dailyCockpit.router && inputs.dailyCockpit.router.manualCandidates) || [])
@@ -562,9 +662,20 @@ function determineDecision({ guardrails, inputs, selectorRanking, sizingRows, ti
     .filter((row) => ["candidato_manual", "revisar_manual"].includes(row.pipelineAction))
     .forEach((row) => manualCandidates.add(row.ticker));
 
+  selectorRanking
+    .filter((row) =>
+      (row.guardFlags || []).includes("lifecycleGuard") ||
+      (row.guardFlags || []).includes("thesisIntegrityEngine") ||
+      (row.pipelineRedFlags || []).some((flag) => /lifecycle|thesis_broken|freeze/.test(flag))
+    )
+    .forEach((row) => riskReview.add(row.ticker));
+
   sizingRows
     .filter((row) => row.sizingAction === "reduce_risk")
-    .forEach((row) => manualCandidates.add(row.ticker));
+    .forEach((row) => {
+      manualCandidates.add(row.ticker);
+      riskReview.add(row.ticker);
+    });
 
   selectorRanking
     .filter((row) => row.pipelineClassification === "discard")
@@ -599,7 +710,8 @@ function determineDecision({ guardrails, inputs, selectorRanking, sizingRows, ti
     finalDecision,
     manualCandidates: [...manualCandidates].filter((ticker) => !blocklist.has(ticker)).sort(),
     missingToAct: [...new Set(missingToAct)],
-    operables: operables.map((row) => row.ticker)
+    operables: operables.map((row) => row.ticker),
+    riskReview: [...riskReview].sort()
   };
 }
 
@@ -641,6 +753,21 @@ function renderSummary(payload) {
   lines.push("");
   lines.push("## Manual candidates");
   lines.push(payload.decision.manualCandidates.length ? `- ${payload.decision.manualCandidates.join(", ")}` : "- Ninguno.");
+  lines.push("");
+  lines.push("## Risk review");
+  lines.push(payload.decision.riskReview && payload.decision.riskReview.length ? `- ${payload.decision.riskReview.join(", ")}` : "- Ninguno.");
+  lines.push("");
+  lines.push("## Lifecycle Guard");
+  lines.push(`- Active: ${payload.lifecycleGuard ? "true" : "false"}`);
+  lines.push(`- Incomplete positions: ${payload.lifecycleIncompletePositions.length ? payload.lifecycleIncompletePositions.map((row) => row.ticker).join(", ") : "ninguna"}`);
+  if (payload.lifecycleIncompletePositions.length) {
+    payload.lifecycleIncompletePositions.forEach((row) => {
+      const riskText = row.existingRiskFlags && row.existingRiskFlags.thesisStatus === "thesis_broken"
+        ? " | thesis_broken/freeze"
+        : "";
+      lines.push(`- ${row.ticker}: ${row.lifecycleStatus}${riskText} | missing ${row.missingLifecycleFields.join(", ")}`);
+    });
+  }
   lines.push("");
   lines.push("## Ranking final");
   lines.push(renderTable(
@@ -773,11 +900,13 @@ function buildPipelinePayload(options = {}) {
     inputs,
     pipelineLatest: null
   }).payload;
+  const lifecycleGuard = buildLifecycleGuardPayload({ inputs });
   const rawSelectorRanking = (inputs.selectorEngine && inputs.selectorEngine.ranking) || [];
   const socialSignals = socialRows(inputs);
   const guardrails = applyGuardrails({
     catalyst,
     inputs,
+    lifecycleGuard,
     positionShockMonitor,
     preCatalystExitGuard,
     selectorRanking: rawSelectorRanking,
@@ -828,6 +957,7 @@ function buildPipelinePayload(options = {}) {
   const health = buildHealth({
     conflicts: guardrails.conflicts,
     inputs,
+    lifecycleGuard,
     missingData,
     positionShockMonitor,
     preCatalystExitGuard,
@@ -856,6 +986,9 @@ function buildPipelinePayload(options = {}) {
     generatedAt: new Date().toISOString(),
     health,
     healthStatus: health.healthStatus,
+    lifecycleGuard,
+    lifecycleIncompletePositions: lifecycleGuard.lifecycle.positions.filter((row) => row.lifecycleStatus === "incomplete"),
+    lifecycleRequiredRules: lifecycleGuard.requiredSystemRules,
     missingData,
     mode,
     pipelineMode: "read-only-research",
@@ -913,6 +1046,8 @@ function renderConsoleReport(payload) {
     `Ranking: ${top.join(" | ") || "missingData"}`,
     `Operables: ${payload.decision.operables.join(", ") || "ninguno"}`,
     `Manual candidates: ${payload.decision.manualCandidates.join(", ") || "ninguno"}`,
+    `Risk review: ${(payload.decision.riskReview || []).join(", ") || "ninguno"}`,
+    `Lifecycle incomplete: ${(payload.lifecycleIncompletePositions || []).map((row) => row.ticker).join(", ") || "ninguno"}`,
     `Exit guard: ${payload.preCatalystExitGuard.summary.tickersToFreeze.join(", ") || "ninguno"}`,
     `Shock events: ${shocks.join(", ") || "ninguno"}`,
     `Conflictos: ${payload.conflicts.join(" | ") || "ninguno"}`,
@@ -926,6 +1061,7 @@ function renderHealthConsoleReport(payload) {
   const decisionFinal = payload.decisionFinal || payload.decision && payload.decision.finalAction || "missingData";
   const operables = payload.decision && payload.decision.operables || [];
   const manualCandidates = payload.decision && payload.decision.manualCandidates || [];
+  const riskReview = payload.decision && payload.decision.riskReview || [];
   const guardTickers =
     payload.preCatalystExitGuard &&
     payload.preCatalystExitGuard.summary &&
@@ -940,6 +1076,10 @@ function renderHealthConsoleReport(payload) {
     `decisionFinal: ${decisionFinal}`,
     `operables: ${operables.join(", ") || "ninguno"}`,
     `manualCandidates: ${manualCandidates.join(", ") || "ninguno"}`,
+    `riskReview: ${riskReview.join(", ") || "ninguno"}`,
+    `lifecycleGuard: ${payload.lifecycleGuard ? "active" : "inactive"}`,
+    `lifecycleIncompletePositions: ${(payload.lifecycleIncompletePositions || []).map((row) => row.ticker).join(", ") || "ninguna"}`,
+    `lifecycleBlockers: ${payload.health && payload.health.lifecycleBlockers ? payload.health.lifecycleBlockers.map((row) => `${row.ticker}:${row.missingLifecycleFields.length}`).join(" | ") || "ninguno" : "n/d"}`,
     `preCatalystExitGuard: ${guardTickers.join(", ") || "ninguno"}`,
     `shockEvents: ${shockEvents.map((row) => `${row.ticker}:${row.shockSeverity}`).join(", ") || "ninguno"}`,
     `missingData: ${(payload.missingData || []).join(" | ") || "ninguna"}`,

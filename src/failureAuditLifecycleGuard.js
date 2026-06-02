@@ -594,6 +594,40 @@ function buildInputs() {
   };
 }
 
+function wrapProvidedInput(key, value) {
+  return {
+    exists: value !== null && value !== undefined,
+    path: INPUT_PATHS[key] || "provided",
+    value
+  };
+}
+
+function buildInputsFromProvided(providedInputs) {
+  const emptyInputs = {
+    biotechExpandedExample: {},
+    dailyLog: {},
+    dailyRunLatest: null,
+    dataHygieneAuditLatest: null,
+    outcomes: { outcomes: [] },
+    positionShockLatest: null,
+    positions: { positions: [] },
+    preCatalystExitGuardLatest: null,
+    settings: { timezone: "America/Argentina/Buenos_Aires" },
+    watchlist: { watchlist: [] }
+  };
+  const merged = {
+    ...emptyInputs,
+    ...providedInputs,
+    positions: providedInputs.positions || emptyInputs.positions,
+    settings: providedInputs.settings || emptyInputs.settings,
+    watchlist: providedInputs.watchlist || emptyInputs.watchlist
+  };
+
+  return Object.fromEntries(
+    Object.keys(emptyInputs).map((key) => [key, wrapProvidedInput(key, merged[key])])
+  );
+}
+
 function summarizePatterns(failures, lifecycleRows) {
   const patternCounts = new Map();
 
@@ -707,8 +741,8 @@ function renderSummary(payload) {
   return `${lines.join("\n")}\n`;
 }
 
-function buildPayload() {
-  const inputs = buildInputs();
+function buildPayload(options = {}) {
+  const inputs = options.inputs ? buildInputsFromProvided(options.inputs) : buildInputs();
   const currentDate = getCurrentDateInTimezone(inputs.settings.value.timezone);
   const failures = [
     buildOcsFailure(inputs),
